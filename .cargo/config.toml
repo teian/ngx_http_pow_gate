@@ -1,0 +1,13 @@
+# Project-wide default nginx version for the vendored/auto-download build path.
+#
+# When neither NGINX_SOURCE_DIR nor NGINX_BUILD_DIR is set and the build uses the
+# `ngx/vendored` feature, the `nginx-src` crate would otherwise fall back to its
+# own *bundled* nginx (1.28.x). Pin it to the version this module targets so a
+# convenience build matches production instead of silently dropping to 1.28.
+#
+# This is the `nginx-src` crate's variable (`NGX_*`), NOT nginx-sys's
+# `NGINX_SOURCE_DIR`. A real shell env value still overrides this, so the
+# documented `NGINX_SOURCE_DIR=<configured tree>` production workflow is
+# unaffected (that path never consults NGX_VERSION).
+[env]
+NGX_VERSION = "1.31.1"

@@ -1,0 +1,10 @@
+# Rust
+/target
+**/*.rs.bk
+# this is a dynamic module, not a bin — lockfile is not committed
+Cargo.lock
+
+# nginx build artifacts (when building against a local nginx source tree)
+/.nginx
+/nginx-*/
+*.so

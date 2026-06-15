@@ -1,0 +1,16 @@
+# Virtual workspace: this file is only workspace glue — it is not a package. Each
+# crate is a directory under src/ (src/<crate>/), with its own Cargo.toml, source,
+# and tests. See docs/testing.md.
+[workspace]
+resolver = "2"
+members = ["src/*"]
+# Standalone projects — depend on the core but not on nginx, so they build on
+# their own (the e2e / perf stages) rather than as workspace members.
+exclude = ["tests/integration", "perf"]
+
+# Release profile applies to the whole workspace (must live at the workspace root).
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"         # never unwind across the C ABI boundary into nginx

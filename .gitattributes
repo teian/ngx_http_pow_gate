@@ -1,0 +1,24 @@
+# Normalize line endings: treat everything as text, check out/in with LF.
+* text=auto eol=lf
+
+# Source & config — explicit text + LF.
+*.rs    text eol=lf diff=rust
+*.toml  text eol=lf
+*.md    text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.js    text eol=lf
+*.json  text eol=lf
+*.conf  text eol=lf
+*.sh    text eol=lf
+
+# Keep GitHub's language stats focused on the Rust module. The docs, the example
+# nginx config, and the (large, i18n-heavy) challenge page are support material,
+# not the thing being shipped.
+docs/**        linguist-documentation
+examples/**    linguist-language=Nginx
+assets/*.html  linguist-detectable=false
+
+# Never normalize a committed binary (none today, but be explicit if one lands).
+*.so  binary
+*.mmdb binary

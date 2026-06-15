@@ -9,7 +9,7 @@ jobs:
   core:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: core unit tests
         run: cd src/pow-gate-core && cargo test --locked || cargo test
@@ -20,7 +20,7 @@ jobs:
   module:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: build module .so (compiles the FFI shell against nginx)
         run: docker build -f docker/Dockerfile --target module-build .
       - name: nginx -t smoke (module loads, directives parse)
@@ -31,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [core, module]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: run end-to-end
         run: |
           docker compose -f docker-compose.test.yml up --build \

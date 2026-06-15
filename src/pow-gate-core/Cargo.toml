@@ -1,0 +1,39 @@
+[package]
+name = "pow-gate-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Pure-Rust proof-of-work gate engine: PoW, clearance tokens, per-request proofs"
+license = "BSD-2-Clause"
+publish = false
+
+# Deliberately depends on NOTHING from nginx, so it builds and unit-tests on any
+# platform without an nginx tree. The nginx module crate (../) depends on this and
+# is a thin FFI shell over it.
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
+subtle = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+getrandom = "0.2"
+p256 = { version = "0.13", features = ["ecdsa"] }
+
+# Integration tests live in core/tests/ — each file is its own test crate that
+# exercises the public API only (see ../docs/testing.md). They may need the same
+# crypto crates to construct inputs (e.g. sign a proof), so they are repeated here.
+[dev-dependencies]
+p256 = { version = "0.13", features = ["ecdsa"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+serde_json = "1"
+criterion = "0.5"
+
+# Microbenchmarks of the per-request crypto hot path (find the bottleneck).
+# Run: cargo bench -p pow-gate-core   — see docs/performance.md.
+[[bench]]
+name = "engine"
+harness = false

@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checking your browser…</title>
+
+<!--
+  CUSTOMIZE FREELY. The module only requires these hook IDs to exist; the
+  solver at {{endpoint}}solver.js drives them as the proof-of-work runs:
+
+    #pow-status    text element  — status messages ("Verifying…", "Done")
+    #pow-progress  <progress>    — value 0..100 (or set style.width yourself)
+    #pow-percent   text element  — numeric percent
+    #pow-error     element       — shown if verification fails
+
+  Template placeholders filled in by the module before serving:
+    {{difficulty}}  — configured PoW difficulty
+    {{endpoint}}    — internal route prefix (default "/.pow/")
+
+  THEME: this default page follows the system/browser light/dark preference
+  (prefers-color-scheme) and adds a switcher (top right) that cycles
+  Auto → Light → Dark, persisted in localStorage. Everything else — markup, CSS,
+  logo, copy, animation — is yours to change.
+-->
+
+<!-- Apply a saved theme before first paint to avoid a flash of the wrong colors. -->
+<script>
+  try {
+    var t = localStorage.getItem('pow-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+</script>
+
+<!--
+  i18n: detect the browser language and expose the strings as window.__POW_I18N__
+  (shared with solver.js for its live status messages). Add a language by adding a
+  key below; the two-letter code is matched against navigator.languages, English
+  is the fallback. Keep the diacritics intact.
+-->
+<script>
+  (function () {
+    var I18N = {
+      en: { title: "Checking your browser…", heading: "Just a moment…",
+            sub: "Your browser is completing a quick automatic check.",
+            preparing: "Preparing…", requesting: "Requesting challenge…",
+            verifying: "Verifying…", done: "Done",
+            error_failed: "Verification failed.", retry: "Try again",
+            foot: "This takes a few seconds and runs entirely in your browser." },
+      de: { title: "Browser wird überprüft…", heading: "Einen Moment…",
+            sub: "Ihr Browser führt eine schnelle automatische Prüfung durch.",
+            preparing: "Wird vorbereitet…", requesting: "Anfrage wird gesendet…",
+            verifying: "Wird überprüft…", done: "Fertig",
+            error_failed: "Überprüfung fehlgeschlagen.", retry: "Erneut versuchen",
+            foot: "Das dauert nur wenige Sekunden und läuft vollständig in Ihrem Browser." },
+      es: { title: "Comprobando tu navegador…", heading: "Un momento…",
+            sub: "Tu navegador está completando una comprobación automática rápida.",
+            preparing: "Preparando…", requesting: "Solicitando desafío…",
+            verifying: "Verificando…", done: "Listo",
+            error_failed: "La verificación ha fallado.", retry: "Inténtalo de nuevo",
+            foot: "Esto tarda unos segundos y se ejecuta por completo en tu navegador." },
+      fr: { title: "Vérification de votre navigateur…", heading: "Un instant…",
+            sub: "Votre navigateur effectue une vérification automatique rapide.",
+            preparing: "Préparation…", requesting: "Envoi de la requête…",
+            verifying: "Vérification…", done: "Terminé",
+            error_failed: "Échec de la vérification.", retry: "Réessayer",
+            foot: "Cela prend quelques secondes et s’exécute entièrement dans votre navigateur." },
+      nl: { title: "Je browser wordt gecontroleerd…", heading: "Een ogenblik…",
+            sub: "Je browser voert een snelle automatische controle uit.",
+            preparing: "Voorbereiden…", requesting: "Verzoek wordt verzonden…",
+            verifying: "Bezig met verifiëren…", done: "Klaar",
+            error_failed: "Verificatie mislukt.", retry: "Opnieuw proberen",
+            foot: "Dit duurt enkele seconden en gebeurt volledig in je browser." },
+      pl: { title: "Sprawdzanie przeglądarki…", heading: "Chwileczkę…",
+            sub: "Twoja przeglądarka wykonuje szybką automatyczną weryfikację.",
+            preparing: "Przygotowywanie…", requesting: "Wysyłanie żądania…",
+            verifying: "Weryfikacja…", done: "Gotowe",
+            error_failed: "Weryfikacja nie powiodła się.", retry: "Spróbuj ponownie",
+            foot: "To zajmie kilka sekund i odbywa się w całości w Twojej przeglądarce." },
+      pt: { title: "A verificar o seu navegador…", heading: "Um momento…",
+            sub: "O seu navegador está a concluir uma verificação automática rápida.",
+            preparing: "A preparar…", requesting: "A solicitar desafio…",
+            verifying: "A verificar…", done: "Concluído",
+            error_failed: "A verificação falhou.", retry: "Tentar novamente",
+            foot: "Isto demora alguns segundos e é executado inteiramente no seu navegador." },
+      zh: { title: "正在检查您的浏览器…", heading: "请稍候…",
+            sub: "您的浏览器正在完成快速自动检查。",
+            preparing: "准备中…", requesting: "正在请求验证…",
+            verifying: "正在验证…", done: "完成",
+            error_failed: "验证失败。", retry: "重试",
+            foot: "这需要几秒钟，并且完全在您的浏览器中运行。" },
+      ja: { title: "ブラウザを確認しています…", heading: "少々お待ちください…",
+            sub: "ブラウザが簡単な自動チェックを実行しています。",
+            preparing: "準備中…", requesting: "チャレンジを要求中…",
+            verifying: "確認中…", done: "完了",
+            error_failed: "確認に失敗しました。", retry: "再試行",
+            foot: "これには数秒かかり、すべてブラウザ内で実行されます。" },
+      ko: { title: "브라우저를 확인하는 중…", heading: "잠시만 기다려 주세요…",
+            sub: "브라우저에서 빠른 자동 확인을 진행하고 있습니다.",
+            preparing: "준비 중…", requesting: "챌린지 요청 중…",
+            verifying: "확인 중…", done: "완료",
+            error_failed: "확인에 실패했습니다.", retry: "다시 시도",
+            foot: "몇 초 정도 걸리며 전적으로 브라우저에서 실행됩니다." },
+      ru: { title: "Проверка вашего браузера…", heading: "Один момент…",
+            sub: "Ваш браузер выполняет быструю автоматическую проверку.",
+            preparing: "Подготовка…", requesting: "Запрос проверки…",
+            verifying: "Проверка…", done: "Готово",
+            error_failed: "Проверка не удалась.", retry: "Повторить",
+            foot: "Это займёт несколько секунд и выполняется полностью в вашем браузере." },
+      it: { title: "Controllo del browser…", heading: "Un momento…",
+            sub: "Il tuo browser sta completando un rapido controllo automatico.",
+            preparing: "Preparazione…", requesting: "Richiesta della verifica…",
+            verifying: "Verifica…", done: "Fatto",
+            error_failed: "Verifica non riuscita.", retry: "Riprova",
+            foot: "Bastano pochi secondi e tutto avviene nel tuo browser." },
+      tr: { title: "Tarayıcınız kontrol ediliyor…", heading: "Bir saniye…",
+            sub: "Tarayıcınız hızlı bir otomatik kontrol gerçekleştiriyor.",
+            preparing: "Hazırlanıyor…", requesting: "Doğrulama isteniyor…",
+            verifying: "Doğrulanıyor…", done: "Tamam",
+            error_failed: "Doğrulama başarısız oldu.", retry: "Tekrar dene",
+            foot: "Bu birkaç saniye sürer ve tamamen tarayıcınızda çalışır." },
+      id: { title: "Memeriksa browser Anda…", heading: "Sebentar…",
+            sub: "Browser Anda sedang menyelesaikan pemeriksaan otomatis singkat.",
+            preparing: "Menyiapkan…", requesting: "Meminta tantangan…",
+            verifying: "Memverifikasi…", done: "Selesai",
+            error_failed: "Verifikasi gagal.", retry: "Coba lagi",
+            foot: "Ini memerlukan beberapa detik dan berjalan sepenuhnya di browser Anda." },
+      vi: { title: "Đang kiểm tra trình duyệt của bạn…", heading: "Chờ một lát…",
+            sub: "Trình duyệt của bạn đang hoàn tất việc kiểm tra tự động nhanh.",
+            preparing: "Đang chuẩn bị…", requesting: "Đang yêu cầu xác minh…",
+            verifying: "Đang xác minh…", done: "Xong",
+            error_failed: "Xác minh không thành công.", retry: "Thử lại",
+            foot: "Việc này mất vài giây và chạy hoàn toàn trong trình duyệt của bạn." },
+      hi: { title: "आपके ब्राउज़र की जाँच हो रही है…", heading: "कृपया प्रतीक्षा करें…",
+            sub: "आपका ब्राउज़र एक त्वरित स्वचालित जाँच पूरी कर रहा है।",
+            preparing: "तैयार हो रहा है…", requesting: "सत्यापन का अनुरोध…",
+            verifying: "सत्यापित किया जा रहा है…", done: "पूर्ण",
+            error_failed: "सत्यापन विफल रहा।", retry: "पुनः प्रयास करें",
+            foot: "इसमें कुछ सेकंड लगते हैं और यह पूरी तरह आपके ब्राउज़र में चलता है।" },
+      th: { title: "กำลังตรวจสอบเบราว์เซอร์ของคุณ…", heading: "สักครู่…",
+            sub: "เบราว์เซอร์ของคุณกำลังทำการตรวจสอบอัตโนมัติอย่างรวดเร็ว",
+            preparing: "กำลังเตรียม…", requesting: "กำลังขอการตรวจสอบ…",
+            verifying: "กำลังตรวจสอบ…", done: "เสร็จสิ้น",
+            error_failed: "การตรวจสอบล้มเหลว", retry: "ลองอีกครั้ง",
+            foot: "ใช้เวลาไม่กี่วินาทีและทำงานในเบราว์เซอร์ของคุณทั้งหมด" },
+      uk: { title: "Перевірка вашого браузера…", heading: "Один момент…",
+            sub: "Ваш браузер виконує швидку автоматичну перевірку.",
+            preparing: "Підготовка…", requesting: "Запит перевірки…",
+            verifying: "Перевірка…", done: "Готово",
+            error_failed: "Перевірка не вдалася.", retry: "Повторити",
+            foot: "Це займе кілька секунд і виконується повністю у вашому браузері." },
+      cs: { title: "Kontrola vašeho prohlížeče…", heading: "Okamžik…",
+            sub: "Váš prohlížeč provádí rychlou automatickou kontrolu.",
+            preparing: "Příprava…", requesting: "Požadavek na ověření…",
+            verifying: "Ověřování…", done: "Hotovo",
+            error_failed: "Ověření se nezdařilo.", retry: "Zkusit znovu",
+            foot: "Trvá to několik sekund a probíhá zcela ve vašem prohlížeči." },
+      ro: { title: "Se verifică browserul dvs.…", heading: "Un moment…",
+            sub: "Browserul dvs. efectuează o verificare automată rapidă.",
+            preparing: "Se pregătește…", requesting: "Se solicită verificarea…",
+            verifying: "Se verifică…", done: "Gata",
+            error_failed: "Verificarea a eșuat.", retry: "Încearcă din nou",
+            foot: "Durează câteva secunde și se execută complet în browserul dvs." },
+      el: { title: "Έλεγχος του προγράμματος περιήγησης…", heading: "Μια στιγμή…",
+            sub: "Το πρόγραμμα περιήγησής σας ολοκληρώνει έναν γρήγορο αυτόματο έλεγχο.",
+            preparing: "Προετοιμασία…", requesting: "Αίτημα επαλήθευσης…",
+            verifying: "Επαλήθευση…", done: "Έτοιμο",
+            error_failed: "Η επαλήθευση απέτυχε.", retry: "Δοκιμάστε ξανά",
+            foot: "Διαρκεί λίγα δευτερόλεπτα και εκτελείται εξ ολοκλήρου στο πρόγραμμα περιήγησής σας." },
+      hu: { title: "A böngésző ellenőrzése…", heading: "Egy pillanat…",
+            sub: "A böngészője egy gyors automatikus ellenőrzést végez.",
+            preparing: "Előkészítés…", requesting: "Ellenőrzés kérése…",
+            verifying: "Ellenőrzés…", done: "Kész",
+            error_failed: "Az ellenőrzés sikertelen.", retry: "Próbálja újra",
+            foot: "Ez néhány másodpercet vesz igénybe, és teljes egészében a böngészőjében fut." },
+      sv: { title: "Kontrollerar din webbläsare…", heading: "Ett ögonblick…",
+            sub: "Din webbläsare slutför en snabb automatisk kontroll.",
+            preparing: "Förbereder…", requesting: "Begär verifiering…",
+            verifying: "Verifierar…", done: "Klart",
+            error_failed: "Verifieringen misslyckades.", retry: "Försök igen",
+            foot: "Det tar några sekunder och körs helt i din webbläsare." },
+      da: { title: "Kontrollerer din browser…", heading: "Et øjeblik…",
+            sub: "Din browser gennemfører et hurtigt automatisk tjek.",
+            preparing: "Forbereder…", requesting: "Anmoder om verificering…",
+            verifying: "Verificerer…", done: "Færdig",
+            error_failed: "Verificeringen mislykkedes.", retry: "Prøv igen",
+            foot: "Det tager nogle få sekunder og kører udelukkende i din browser." },
+      nb: { title: "Kontrollerer nettleseren din…", heading: "Et øyeblikk…",
+            sub: "Nettleseren din fullfører en rask automatisk kontroll.",
+            preparing: "Forbereder…", requesting: "Ber om verifisering…",
+            verifying: "Verifiserer…", done: "Ferdig",
+            error_failed: "Verifiseringen mislyktes.", retry: "Prøv igjen",
+            foot: "Det tar noen få sekunder og kjøres helt i nettleseren din." },
+      fi: { title: "Tarkistetaan selaintasi…", heading: "Hetkinen…",
+            sub: "Selaimesi suorittaa nopean automaattisen tarkistuksen.",
+            preparing: "Valmistellaan…", requesting: "Pyydetään vahvistusta…",
+            verifying: "Vahvistetaan…", done: "Valmis",
+            error_failed: "Vahvistus epäonnistui.", retry: "Yritä uudelleen",
+            foot: "Tämä kestää muutaman sekunnin ja tapahtuu kokonaan selaimessasi." }
+    };
+    I18N.no = I18N.nb; // some browsers report "no" instead of "nb" for Norwegian
+    var langs = navigator.languages || [navigator.language || 'en'];
+    var lang = 'en';
+    for (var i = 0; i < langs.length; i++) {
+      var code = (langs[i] || '').toLowerCase().slice(0, 2);
+      if (I18N[code]) { lang = code; break; }
+    }
+    window.__POW_I18N__ = I18N[lang];
+    document.documentElement.lang = lang;
+  })();
+</script>
+
+<style>
+  /* LIGHT palette is the base; DARK is applied when the system prefers dark
+     (and the user hasn't forced light), or when data-theme="dark" is set. */
+  :root {
+    color-scheme: light dark;
+    --bg:     #f6f7f9;
+    --card:   #ffffff;
+    --fg:     #1b1f27;
+    --muted:  #5b6270;
+    --accent: #2f6df6;
+    --track:  #e3e7ee;
+    --err:    #c0392b;
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:     #0f1117;
+      --card:   #171a22;
+      --fg:     #e6e8ee;
+      --muted:  #8b91a1;
+      --accent: #6ea8fe;
+      --track:  #2a2f3a;
+      --err:    #ff8a8a;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg:     #0f1117;
+    --card:   #171a22;
+    --fg:     #e6e8ee;
+    --muted:  #8b91a1;
+    --accent: #6ea8fe;
+    --track:  #2a2f3a;
+    --err:    #ff8a8a;
+  }
+  :root[data-theme="light"] { color-scheme: light; }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100dvh; display: grid; place-items: center;
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    transition: background .2s, color .2s;
+  }
+  .card {
+    width: min(92vw, 420px); padding: 32px 28px; text-align: center;
+    background: var(--card); border-radius: var(--radius);
+    box-shadow: 0 12px 40px rgba(0,0,0,.18);
+  }
+  .logo { font-weight: 700; letter-spacing: .02em; margin-bottom: 18px; }
+  h1 { font-size: 1.15rem; margin: 0 0 6px; }
+  p.sub { color: var(--muted); margin: 0 0 22px; }
+
+  /* Progress UI — restyle however you like */
+  progress {
+    appearance: none; width: 100%; height: 10px; border: 0;
+    border-radius: 999px; overflow: hidden; background: var(--track);
+  }
+  progress::-webkit-progress-bar { background: var(--track); }
+  progress::-webkit-progress-value,
+  progress::-moz-progress-bar { background: var(--accent); transition: width .15s; }
+
+  .meta { display: flex; justify-content: space-between;
+          color: var(--muted); font-size: .85rem; margin-top: 10px; }
+  #pow-error { display: none; margin-top: 16px; color: var(--err); font-size: .9rem; }
+  .foot { margin-top: 24px; color: var(--muted); font-size: .8rem; }
+  noscript { color: var(--err); }
+
+  /* Theme switcher, top right */
+  .theme-toggle {
+    position: fixed; top: 14px; right: 14px;
+    width: 38px; height: 38px; display: grid; place-items: center;
+    border: 1px solid var(--track); border-radius: 10px;
+    background: var(--card); color: var(--fg); cursor: pointer;
+    font-size: 16px; line-height: 1; box-shadow: 0 2px 10px rgba(0,0,0,.18);
+    transition: border-color .15s, background .2s;
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
+  .theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+
+<body>
+  <button id="theme-toggle" class="theme-toggle" type="button"
+          aria-label="Color theme: auto (click to change)" title="Theme: auto">
+    <span id="theme-icon" aria-hidden="true">🖥️</span>
+  </button>
+
+  <main class="card" role="status" aria-live="polite">
+    <div class="logo">🛡️ example.com</div>
+    <h1 data-i18n="heading">Just a moment…</h1>
+    <p class="sub" data-i18n="sub">Your browser is completing a quick automatic check.</p>
+
+    <progress id="pow-progress" max="100" value="0"></progress>
+    <div class="meta">
+      <span id="pow-status" data-i18n="preparing">Preparing…</span>
+      <span><span id="pow-percent">0</span>%</span>
+    </div>
+
+    <div id="pow-error">
+      <span data-i18n="error_failed">Verification failed.</span>
+      <a href="" onclick="location.reload();return false;" data-i18n="retry">Try again</a>.
+    </div>
+
+    <p class="foot" data-i18n="foot">This takes a few seconds and runs entirely in your browser.</p>
+    <noscript>JavaScript is required to complete this check.</noscript>
+  </main>
+
+  <!-- Theme switcher: cycles Auto → Light → Dark, persisted. Independent of the
+       solver; pure presentation, safe to remove or restyle. -->
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var btn  = document.getElementById('theme-toggle');
+      var icon = document.getElementById('theme-icon');
+      var modes = ['auto', 'light', 'dark'];
+      var glyph = { auto: '🖥️', light: '☀️', dark: '🌙' };
+
+      var saved = null;
+      try { saved = localStorage.getItem('pow-theme'); } catch (e) {}
+      var current = modes.indexOf(saved) >= 0 ? saved : 'auto';
+
+      function apply(mode) {
+        if (mode === 'auto') root.removeAttribute('data-theme');
+        else root.setAttribute('data-theme', mode);
+        icon.textContent = glyph[mode];
+        btn.title = 'Theme: ' + mode;
+        btn.setAttribute('aria-label', 'Color theme: ' + mode + ' (click to change)');
+      }
+      apply(current);
+
+      btn.addEventListener('click', function () {
+        current = modes[(modes.indexOf(current) + 1) % modes.length];
+        try { localStorage.setItem('pow-theme', current); } catch (e) {}
+        apply(current);
+      });
+    })();
+  </script>
+
+  <!-- i18n: localize the static page copy from the detected language. Runs at
+       end of body so the elements above already exist. The solver localizes its
+       own live status messages from the same window.__POW_I18N__. -->
+  <script>
+    (function () {
+      var t = window.__POW_I18N__ || {};
+      if (t.title) document.title = t.title;
+      var nodes = document.querySelectorAll('[data-i18n]');
+      for (var i = 0; i < nodes.length; i++) {
+        var key = nodes[i].getAttribute('data-i18n');
+        if (t[key]) nodes[i].textContent = t[key];
+      }
+    })();
+  </script>
+
+  <!-- The module serves the solver (keypair gen, PoW loop in a Web Worker,
+       per-request proof signing). It reads difficulty/endpoint from data-attrs
+       and updates the hook IDs above, then reloads on success. -->
+  <script src="{{endpoint}}solver.js"
+          data-difficulty="{{difficulty}}"
+          data-endpoint="{{endpoint}}"
+          defer></script>
+</body>
+</html>

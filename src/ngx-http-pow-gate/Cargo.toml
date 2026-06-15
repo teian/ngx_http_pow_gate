@@ -1,0 +1,32 @@
+[package]
+name = "ngx-http-pow-gate"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "nginx dynamic module: proof-of-work gate for bot/scraper mitigation"
+license = "BSD-2-Clause"
+publish = false
+
+# Build a C-ABI shared object that nginx loads via `load_module`.
+# The final artifact is renamed to `ngx_http_pow_gate_module.so` (see docs/build.md).
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+# High-level safe-ish bindings over nginx's C module ABI.
+# The `ngx` crate pulls in `nginx-sys`, whose build script discovers / fetches
+# the nginx source the module is compiled against. See docs/build.md for the
+# environment variables that control which nginx version is used.
+ngx = "0.5"
+
+# The nginx-free engine: all PoW / clearance / proof crypto, unit-tested on its
+# own (see ../pow-gate-core and docs/testing.md). This crate is a thin FFI shell.
+pow-gate-core = { path = "../pow-gate-core" }
+
+# Remaining module-side dependencies (good-bot verifier + JSON).
+arc-swap = "1"          # lock-free hot-swap of refreshed IP-range tables
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"        # /verify body + crawler ip_ranges JSON feeds
+ureq = "2"              # fetch the crawler ip_ranges feeds (background thread)
+libc = "0.2"            # FCrDNS: getnameinfo / getaddrinfo (background thread)

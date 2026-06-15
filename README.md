@@ -1,5 +1,7 @@
 # ngx_http_pow_gate_module
 
+[![ci](https://github.com/teian/ngx_http_pow_gate/actions/workflows/ci.yml/badge.svg)](https://github.com/teian/ngx_http_pow_gate/actions/workflows/ci.yml)
+
 A native **nginx dynamic module** that puts a **proof-of-work (PoW) gate** in front
 of your sites to deter scrapers, AI crawlers, and abusive bots — while letting
 real browsers, trusted networks, and *verified* good bots through with no friction.

@@ -1,0 +1,29 @@
+# Containerized performance run: nginx + module, then the load generator.
+#   docker compose -f docker-compose.perf.yml up --build \
+#     --abort-on-container-exit --exit-code-from perf
+# Knobs: PERF_DURATION / PERF_CONCURRENCY / PERF_MODES (see docs/performance.md).
+
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: nginx-smoke
+      args:
+        NGINX_VERSION: "1.31.1"
+    expose:
+      - "8080"
+
+  perf:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: perf
+    environment:
+      BASE_URL: "http://nginx:8080"
+      PERF_DURATION: "${PERF_DURATION:-5}"
+      PERF_CONCURRENCY: "${PERF_CONCURRENCY:-8}"
+      PERF_MODES: "${PERF_MODES:-baseline,challenge,cleared,proof}"
+    depends_on:
+      nginx:
+        condition: service_started

@@ -1,0 +1,31 @@
+# Full live test: bring up nginx with the module, then run the black-box e2e
+# client against it. `docker compose -f docker-compose.test.yml up --build
+# --abort-on-container-exit --exit-code-from e2e` returns the e2e exit code, so
+# CI can gate on it.
+
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: nginx-smoke
+      args:
+        NGINX_VERSION: "1.31.1"
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  e2e:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: e2e
+    environment:
+      BASE_URL: "http://nginx:8080"
+    depends_on:
+      nginx:
+        condition: service_started

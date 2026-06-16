@@ -1,6 +1,8 @@
 # ngx_http_pow_gate_module
 
 [![ci](https://github.com/teian/ngx_http_pow_gate/actions/workflows/ci.yml/badge.svg)](https://github.com/teian/ngx_http_pow_gate/actions/workflows/ci.yml)
+[![module-amd64](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-amd64.yml/badge.svg)](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-amd64.yml)
+[![module-arm64](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-arm64.yml/badge.svg)](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-arm64.yml)
 
 A native **nginx dynamic module** that puts a **proof-of-work (PoW) gate** in front
 of your sites to deter scrapers, AI crawlers, and abusive bots — while letting
@@ -333,15 +335,15 @@ The module is **functional end-to-end** — every feature below is exercised by 
 Docker pipeline ([docs/testing.md](docs/testing.md)), so this is reproducible, not
 a claim. There is no scaffold left.
 
-**Pipeline — all green:** core tests ✅ · module-build ✅ · nginx-smoke (`nginx -t`) ✅ · **e2e ✅**
+**Pipeline — all green:** core tests ✅ · module-build (glibc + musl, amd64 + arm64) ✅ · nginx-smoke (`nginx -t`, every libc×arch) ✅ · **e2e ✅**
 
 | Area | Evidence |
 | ---- | -------- |
-| Crypto engine — PoW, clearance, ECDSA proof, IP-ranges (`src/pow-gate-core`) | **31 unit tests** green (`cargo test -p pow-gate-core`) |
+| Crypto engine — PoW, clearance, ECDSA proof, IP-ranges (`src/pow-gate-core`) | **32 unit tests** green (`cargo test -p pow-gate-core`) |
 | Browser solver (`assets/solver.js`) | real WebCrypto keygen + 256-bit PoW + proof + IndexedDB |
 | Challenge page (`assets/challenge.html`) | themed (light/dark) + i18n (26 languages) |
 | Directives, config structs, inheritance merge | compiles + `nginx -t` passes |
-| Module builds against nginx 1.31.1 & loads | module-build + nginx-smoke green |
+| Module builds against nginx 1.31.1 & loads (glibc + musl, amd64 + arm64) | module-build + nginx-smoke green for every libc×arch |
 | ACCESS handler + phase registration | handler runs (registered in `postconfiguration`) |
 | `/.pow/` endpoints — challenge JSON, solver, **async `POST /verify` body** | served correctly in the live test |
 | Response I/O — challenge page, JSON, `Set-Cookie`, `204` | written via the `ngx` output chain |

@@ -28,6 +28,7 @@ gate.
 | `pow_gate_hmac_key_file`   | http, server, location    | `<file>`     | —           | `LocationConf.hmac_key_file`    |
 | `pow_gate_clearance_ttl`   | http, server, location    | `<time>`     | `12h`       | `LocationConf.clearance_ttl`    |
 | `pow_gate_proof_skew`      | http, server, location    | `<time>`     | `5s`        | `LocationConf.proof_skew`       |
+| `pow_gate_require_proof`   | http, server, location    | `on`\|`off`  | `on`        | `LocationConf.require_proof`    |
 | `pow_gate_endpoint`        | http, server, location    | `<prefix>`   | `/.pow/`    | `LocationConf.endpoint`         |
 | `pow_gate_cookie_name`     | http, server, location    | `<name>`     | `pow_clearance` | `LocationConf.cookie_name`  |
 | `pow_gate_cookie_domain`   | http, server, location    | `<domain>`   | host-only   | `LocationConf.cookie_domain`    |
@@ -173,10 +174,20 @@ per server/location, so you can run a harder gate on a hot path
 
 ### `pow_gate_hmac_key_file <file>;`
 
-> Context: `http`, `server`, `location` · Argument: file path · **Required to issue clearances**
+> Context: `http`, `server`, `location` · Argument: file path · **Required wherever `pow_gate on`**
 
-The server secret used to HMAC-sign clearance cookies and challenge salts. Set it
-once at `http` and let it inherit — that keeps a single key everywhere, which is
+The server secret used to HMAC-sign clearance cookies and challenge salts.
+
+> **Fail-closed.** Wherever the gate is enabled, this must point to a readable
+> file of **at least 16 bytes** (use 32+). If it is missing, unset, or too short,
+> nginx **refuses to start** (`nginx -t` fails) rather than running with an empty
+> key — an empty/known key would make every clearance and challenge token
+> forgeable. The worker also re-checks at request time: if *it* cannot read the
+> file (e.g. wrong ownership, see below), the gate fails closed — clients are
+> challenged and `/.pow/` returns `503` — instead of falling open. Run the worker
+> as the key file's owner.
+
+Set it once at `http` and let it inherit — that keeps a single key everywhere, which is
 what you want: the `pow_gate_endpoint` location that *issues* a clearance and the
 gated location that *verifies* it must resolve to the **same** key (and the same
 `pow_gate_endpoint`), or clearances won't validate. Override per server/location
@@ -201,12 +212,16 @@ human solves the PoW, re-challenging them every half hour is a nuisance, so the
 default is a generous **12h** (covers a working day). Bump it higher (`24h`,
 `72h`) for a friendlier site; lower it only if you have a specific reason.
 
-Length does **not** weaken per-request security: every request still needs a
-fresh `pow_gate_proof_skew`-bounded proof signed by the client's private key
-(see [docs/architecture.md](architecture.md#the-two-token-security-model)). A
-long clearance just spares the user from redoing the *work*, not the *proof*. The
-only thing a longer TTL widens is the window in which a *stolen private key*
-could be abused — and key theft already implies a compromised client.
+Length trades UX against the replay window of a leaked clearance cookie. With
+`pow_gate_require_proof on` (default), non-navigation requests (fetch/XHR) still
+need a fresh `pow_gate_proof_skew`-bounded proof signed by the client's private
+key (see [docs/architecture.md](architecture.md#the-two-token-security-model)),
+so a stolen cookie cannot be replayed over those. **Top-level navigations are
+gated by the cookie alone** — they cannot carry the proof header — so a longer TTL
+does widen the window in which a leaked cookie could be replayed as a navigation.
+A long clearance spares the user from redoing the *work*, not the *proof*. Keep
+the default unless you have a reason; lower it if cookie leakage is a concern in
+your environment.
 
 nginx time syntax: `30m`, `12h`, `72h`, `90s`.
 
@@ -218,6 +233,27 @@ The validity window for the per-request proof timestamp. Must absorb realistic
 clock skew and network delay between client and server, but small enough that a
 captured proof can't be meaningfully replayed. `5s` is a sane start; raise it if
 you see legitimate failures from clients with bad clocks.
+
+### `pow_gate_require_proof on | off;`
+
+> Context: `http`, `server`, `location` · Default: `on`
+
+Controls whether a valid per-request proof (`X-Pow-Proof`) is **required** on
+non-navigation requests that present a clearance cookie.
+
+- `on` (default) — a request the browser marks as a sub-resource fetch/XHR
+  (`Sec-Fetch-Mode` present and not `navigate`) must carry a valid proof signed by
+  the clearance-bound key; the cookie alone is **not** enough. This is what stops
+  a leaked clearance cookie from being replayed by `fetch`/XHR/CLI tooling.
+- `off` — the cookie alone is accepted on every request (the proof is still
+  verified when present, but never demanded). Use only if a legitimate client
+  cannot run the solver's `fetch` wrapper yet must reuse a clearance.
+
+Top-level navigations (`Sec-Fetch-Mode: navigate`) and clients that send **no**
+`Sec-Fetch-*` metadata at all (older browsers, non-browser agents) are always
+allowed on the cookie alone — they cannot attach a custom header on a navigation,
+so requiring one would lock them out. The hardening therefore targets exactly the
+fetch/XHR replay vector without breaking navigation.
 
 ### `pow_gate_endpoint <prefix>;`
 
@@ -360,13 +396,19 @@ Inner directives:
 | ------------------- | -------------------- | ------------------------------------------------------------- |
 | `ip_ranges_url`     | `<url>` (repeatable) | Official JSON IP-range feed to fetch and merge.               |
 | `ip_ranges_refresh` | `<time>`             | How often to re-fetch the feeds (e.g. `12h`).                 |
-| `fcrdns_suffix`     | `<suffix> …`         | Allowed reverse-DNS suffixes for Forward-Confirmed rDNS.      |
+| `fcrdns_suffix`     | `<suffix> …`         | Allowed reverse-DNS suffixes (matched on a DNS **label boundary**). |
 | `fcrdns_ttl`        | `<time>`             | How long to cache an FCrDNS verdict per IP.                   |
 
 A verifier passes a client if its IP is in the merged ranges **or** FCrDNS
 confirms it. Both are cache-backed; the request hot path never makes a network
 or DNS call. Refreshers run per worker (`init_process`). Define multiple blocks
 with different names for different bot classes.
+
+`fcrdns_suffix` matches on a **DNS label boundary**, so `googlebot.com` accepts
+`crawl-1.googlebot.com` but rejects the look-alike `evilgooglebot.com`. A leading
+dot is optional (`.googlebot.com` and `googlebot.com` behave identically). FCrDNS
+still requires the forward lookup of the PTR name to resolve back to the same IP,
+so a matching suffix alone is never sufficient.
 
 ---
 
@@ -464,6 +506,10 @@ with `limit_req` rather than cranking difficulty to extremes.
 - **Gating `/.well-known/` or ACME paths** → breaks cert issuance/renewal.
   Exclude them.
 - **World-readable HMAC key** → anyone who reads it forges clearances. `chmod 600`.
+- **HMAC key the worker can't read** → with `chmod 600` owned by `root`, an
+  unprivileged nginx worker can't read it and the gate **fails closed** (clients
+  stuck on the challenge, `/.pow/` returns `503`). `chown nginx:nginx` the key so
+  the worker user owns it. Missing/short key now makes `nginx -t` fail outright.
 - **`pow_gate_proof_skew` too low** → clients with skewed clocks fail forever.
   `5s`–`30s` is reasonable.
 - **Expecting non-JS clients to pass a challenge** → they can't. `allow` or

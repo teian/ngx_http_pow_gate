@@ -21,6 +21,10 @@ const CHALLENGE_GRACE: i64 = 120;
 
 /// `GET {endpoint}challenge` → issue fresh challenge parameters as JSON.
 pub fn issue_challenge(r: &mut Request, cfg: &Cfg) -> Status {
+    // No usable HMAC key -> refuse rather than issue a forgeable challenge token.
+    if !cfg.key_ok {
+        return send_and_finish(r, HTTPStatus::SERVICE_UNAVAILABLE, "text/plain", &[], None);
+    }
     let challenge = pow::issue(&cfg.key, cfg.difficulty, runtime::now(), CHALLENGE_GRACE);
     let body = serde_json::to_vec(&challenge).unwrap_or_default();
     send_and_finish(r, HTTPStatus::OK, "application/json", &body, None)
@@ -57,6 +61,10 @@ extern "C" fn verify_body(r: *mut ngx_http_request_t) {
         None => return finalize_status(req, HTTPStatus::BAD_REQUEST),
     };
     let cfg = runtime::resolve(lc);
+    // No usable HMAC key -> refuse to mint a clearance (it would be forgeable).
+    if !cfg.key_ok {
+        return finalize_status(req, HTTPStatus::SERVICE_UNAVAILABLE);
+    }
     let now = runtime::now();
 
     let body = match unsafe { runtime::request_body(r) } {

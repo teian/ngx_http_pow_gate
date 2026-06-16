@@ -16,23 +16,29 @@ jobs:
       - name: e2e client compiles
         run: cd tests/integration && cargo build --locked || cargo build
 
-  # Build the module against a pinned nginx and verify it loads + parses.
-  module:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: build module .so (compiles the FFI shell against nginx)
-        run: docker build -f docker/Dockerfile --target module-build .
-      - name: nginx -t smoke (module loads, directives parse)
-        run: docker build -f docker/Dockerfile --target nginx-smoke .
-
-  # Live black-box handshake: challenge → solve → verify → cleared.
+  # Live black-box handshake: challenge → solve → verify → cleared, per libc AND
+  # arch — covers musl-specific FFI (sockaddr/body/DNS) and arch-specific codegen.
+  # (The module .so is compiled + nginx -t'd here too, via the compose build; the
+  # dedicated build/smoke matrix lives in module-amd64.yml / module-arm64.yml so
+  # each architecture carries its own status badge.)
   e2e:
-    runs-on: ubuntu-latest
-    needs: [core, module]
+    runs-on: ${{ matrix.runner }}
+    needs: [core]
+    strategy:
+      fail-fast: false
+      matrix:
+        libc: [debian, alpine]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
-      - name: run end-to-end
+      - name: run end-to-end (${{ matrix.libc }}/${{ matrix.arch }})
+        env:
+          SMOKE_TARGET: nginx-smoke-${{ matrix.libc }}
         run: |
           docker compose -f docker-compose.test.yml up --build \
             --abort-on-container-exit --exit-code-from e2e

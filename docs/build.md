@@ -156,14 +156,15 @@ Then add the configuration from [examples/nginx.conf](../examples/nginx.conf).
 Building inside an image that matches your runtime nginx is the most reliable way
 to get the ABI right. **This repo already ships that** — see
 [docker/Dockerfile](../docker/Dockerfile) (multi-stage: core tests → build →
-`nginx -t` smoke → e2e) and [docs/testing.md](testing.md). The `module-build`
-stage is the canonical reference; its essence:
+`nginx -t` smoke → e2e) and [docs/testing.md](testing.md). The
+`module-build-debian` (glibc) and `module-build-alpine` (musl) stages are the
+canonical reference; the glibc one's essence:
 
 ```dockerfile
-# Build against the same nginx version you deploy.
-FROM rust:1.90-bookworm AS build
+# Build against the same nginx version + libc you deploy.
+FROM rust:1.95-trixie AS build
 RUN apt-get update && apt-get install -y \
-    build-essential perl libclang-dev clang libpcre2-dev zlib1g-dev libssl-dev \
+    build-essential perl libclang-19-dev clang-19 libpcre2-dev zlib1g-dev libssl-dev \
     curl ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
@@ -179,7 +180,9 @@ COPY --from=build /src/target/release/libngx_http_pow_gate.so \
 ```
 
 Keep `NGINX_VERSION` (build stage) and the `nginx:` runtime tag locked to the
-same value.
+same value — **and the same libc**: build on Alpine (`rust:1.95-alpine`, musl) for
+`nginx:alpine`, on Debian/glibc otherwise. A glibc `.so` will not load into a musl
+nginx and vice-versa.
 
 ---
 
@@ -209,3 +212,93 @@ at config-test time, before you touch live traffic.
 
 For the deeper "why" behind any of this, see
 [docs/architecture.md](architecture.md).
+
+---
+
+## Verifiable builds
+
+Released `.so` artifacts are **reproducible** and carry **provenance + a
+signature**, so you can prove a downloaded module was built from this source by
+this project's CI — and, if you want zero trust in the CI, rebuild it yourself
+and compare hashes.
+
+Four `.so`s are released — one per `{libc × arch}`. Pick the one matching your
+nginx's libc **and** CPU (`uname -m`: `x86_64` → amd64, `aarch64` → arm64):
+
+| Artifact                                  | For                                       | Built on            |
+| ----------------------------------------- | ----------------------------------------- | ------------------- |
+| `ngx_http_pow_gate_module-glibc-amd64.so` | Debian/Ubuntu/RHEL nginx (glibc), x86_64  | Debian trixie/amd64 |
+| `ngx_http_pow_gate_module-glibc-arm64.so` | Debian/Ubuntu/RHEL nginx (glibc), aarch64 | Debian trixie/arm64 |
+| `ngx_http_pow_gate_module-musl-amd64.so`  | Alpine nginx (`nginx:alpine`), x86_64     | Alpine/amd64        |
+| `ngx_http_pow_gate_module-musl-arm64.so`  | Alpine nginx (`nginx:alpine`), aarch64    | Alpine/arm64        |
+
+### Reproducible build
+
+The [`docker/Dockerfile`](../docker/Dockerfile) `module-build-debian` /
+`module-build-alpine` stages are deterministic: base images are pinned by
+**digest**, the nginx source by **SHA256**, every crate by the committed
+**`Cargo.lock`**, `clang`/`libclang` to a major version (bindgen output depends on
+it), and the build sets `SOURCE_DATE_EPOCH`, `CARGO_INCREMENTAL=0`,
+`codegen-units=1`, and `--remap-path-prefix` (no absolute paths leak in). Same
+inputs → byte-identical output.
+
+Rebuild and compare against a published artifact. Build **on the same arch** as
+the target (CI uses native amd64/arm64 runners); to reproduce a different arch
+locally, add `--platform linux/arm64` and have QEMU/binfmt set up.
+
+```bash
+# glibc (Debian trixie), native arch
+docker build -f docker/Dockerfile --target module-export-debian \
+  --output type=local,dest=dist-glibc .
+sha256sum dist-glibc/ngx_http_pow_gate_module.so
+
+# musl (Alpine), native arch
+docker build -f docker/Dockerfile --target module-export-alpine \
+  --output type=local,dest=dist-musl .
+sha256sum dist-musl/ngx_http_pow_gate_module.so
+# compare to the matching <libc>-<arch> line in the release's SHA256SUMS
+```
+
+CI enforces this on every release: the `reproducible` job builds each `.so`
+(per `{libc × arch}`) **twice, independently** and fails if the two hashes differ.
+
+> Residual non-determinism to watch: the exact `clang-19` *patch* version still
+> comes from the distro mirror (apt on trixie, apk on Alpine). For full
+> hermeticity, pin packages via `snapshot.debian.org` / a fixed Alpine repo.
+
+Base images are pulled through `mirror.gcr.io` (Google's pull-through cache of
+Docker Hub) to avoid Docker Hub's anonymous pull rate limit on shared CI IPs —
+the digests are unchanged, so this does not affect reproducibility. Override with
+`--build-arg REGISTRY=docker.io/library` to pull straight from Docker Hub.
+
+### Verify provenance (SLSA)
+
+Each release `.so` has a build-provenance attestation tying it to the workflow,
+commit, and repo. Verify with the GitHub CLI (use the file you downloaded):
+
+```bash
+gh attestation verify ngx_http_pow_gate_module-glibc-amd64.so --repo <owner>/ngx_pow
+```
+
+### Verify the cosign signature
+
+The `.so`s are signed keyless via Sigstore (the workflow's OIDC identity, no
+long-lived key). Each has its own `.sig` + `.pem`:
+
+```bash
+so=ngx_http_pow_gate_module-glibc-amd64.so   # or -glibc-arm64 / -musl-amd64 / -musl-arm64
+cosign verify-blob \
+  --certificate "${so}.pem" \
+  --signature   "${so}.sig" \
+  --certificate-identity-regexp "https://github.com/<owner>/ngx_pow/.github/workflows/release.yml@.*" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  "$so"
+```
+
+### Checksum
+
+`SHA256SUMS` is attached to every release:
+
+```bash
+sha256sum -c SHA256SUMS
+```

@@ -14,13 +14,27 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::config::LocationConf;
 use crate::response::as_str;
 
+/// Minimum accepted HMAC key length, in bytes. A shorter (or empty/unreadable)
+/// key is rejected at config time and fails closed at runtime — it is never used
+/// to HMAC, because a known/empty key makes every clearance and challenge token
+/// forgeable. The docs recommend 32+ random bytes.
+pub const MIN_HMAC_KEY_LEN: usize = 16;
+
 /// Resolved per-request configuration (owned, so it survives across the async
 /// body callback without borrowing nginx memory).
 pub struct Cfg {
     pub key: Arc<Vec<u8>>,
+    /// `true` iff the HMAC key loaded for this location is usable (present,
+    /// readable, and `>= MIN_HMAC_KEY_LEN`). When `false` the gate fails closed:
+    /// no clearance is trusted and the engine endpoints refuse to issue/verify,
+    /// rather than HMAC-ing with an empty/weak key.
+    pub key_ok: bool,
     pub difficulty: u64,
     pub clearance_ttl: i64,
     pub proof_skew: i64,
+    /// Require a valid per-request proof on non-navigation requests (cookie alone
+    /// is accepted only for top-level navigations, which cannot send a header).
+    pub require_proof: bool,
     pub endpoint: String,
     pub cookie: CookieConfig,
 }
@@ -63,11 +77,15 @@ pub unsafe fn location_conf<'a>(r: *mut ngx_http_request_t) -> Option<&'a Locati
 pub fn resolve(lc: &LocationConf) -> Cfg {
     unsafe {
         let key_path = as_str(&lc.hmac_key_file);
+        let key = load_key(key_path);
+        let key_ok = key.len() >= MIN_HMAC_KEY_LEN;
         Cfg {
-            key: load_key(key_path),
+            key,
+            key_ok,
             difficulty: lc.difficulty as u64,
             clearance_ttl: lc.clearance_ttl as i64,
             proof_skew: lc.proof_skew as i64,
+            require_proof: lc.require_proof != 0,
             endpoint: as_str(&lc.endpoint).to_string(),
             cookie: CookieConfig {
                 name: nonempty(as_str(&lc.cookie_name), "pow_clearance"),
@@ -106,7 +124,25 @@ fn load_key(path: &str) -> Arc<Vec<u8>> {
     if let Some(k) = g.get(path) {
         return k.clone();
     }
-    let bytes = std::fs::read(path).unwrap_or_default();
+    // Do NOT silently fall back to an empty key: an empty/known key makes every
+    // token forgeable. On any failure we log and cache an empty Vec, which the
+    // callers treat as "key not usable" and fail closed (see `Cfg::key_ok`).
+    let bytes = match std::fs::read(path) {
+        Ok(b) if b.len() >= MIN_HMAC_KEY_LEN => b,
+        Ok(b) => {
+            eprintln!(
+                "[pow_gate] hmac key file {:?} is {} bytes (< {} required) — gate failing closed",
+                path,
+                b.len(),
+                MIN_HMAC_KEY_LEN
+            );
+            Vec::new()
+        }
+        Err(e) => {
+            eprintln!("[pow_gate] cannot read hmac key file {path:?}: {e} — gate failing closed");
+            Vec::new()
+        }
+    };
     let arc = Arc::new(bytes);
     g.insert(path.to_string(), arc.clone());
     arc

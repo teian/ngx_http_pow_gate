@@ -121,10 +121,14 @@ fn fcrdns_cached(v: &Arc<Verifier>, ip: IpAddr) -> bool {
 /// PTR(ip) ends in a suffix AND forward-resolves back to ip.
 fn fcrdns_confirm(ip: IpAddr, suffixes: &[String]) -> bool {
     let host = match reverse_dns(ip) {
-        Some(h) => h.to_lowercase(),
+        Some(h) => h,
         None => return false,
     };
-    let suffix_ok = suffixes.iter().any(|s| host.ends_with(&s.to_lowercase()));
+    // Label-boundary suffix match (see pow_gate_core): `evilgooglebot.com` must
+    // NOT satisfy a `googlebot.com` suffix.
+    let suffix_ok = suffixes
+        .iter()
+        .any(|s| pow_gate_core::ranges::host_matches_suffix(&host, s));
     if !suffix_ok {
         return false;
     }

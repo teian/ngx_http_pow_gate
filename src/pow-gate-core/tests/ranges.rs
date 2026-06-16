@@ -1,6 +1,6 @@
 //! IP-range set tests. Own test crate; public API only.
 
-use pow_gate_core::ranges::IpRangeSet;
+use pow_gate_core::ranges::{host_matches_suffix, IpRangeSet};
 use std::net::IpAddr;
 
 fn ip(s: &str) -> IpAddr {
@@ -68,4 +68,21 @@ fn empty_or_malformed_feed_is_safe() {
     assert_eq!(s.add_feed_json(b"not json"), 0);
     assert_eq!(s.add_feed_json(br#"{"prefixes":[]}"#), 0);
     assert!(s.is_empty());
+}
+
+#[test]
+fn fcrdns_suffix_respects_label_boundary() {
+    // legitimate sub-domains match
+    assert!(host_matches_suffix("crawl-66-249-66-1.googlebot.com", "googlebot.com"));
+    assert!(host_matches_suffix("bot.search.msn.com", ".search.msn.com"));
+    // exact match is allowed
+    assert!(host_matches_suffix("googlebot.com", "googlebot.com"));
+    // the classic look-alike bypass must be rejected
+    assert!(!host_matches_suffix("evilgooglebot.com", "googlebot.com"));
+    assert!(!host_matches_suffix("googlebot.com.attacker.net", "googlebot.com"));
+    // case-insensitive + FQDN trailing dot
+    assert!(host_matches_suffix("Bot.GoogleBot.Com.", "googlebot.com"));
+    // empty inputs never match
+    assert!(!host_matches_suffix("", "googlebot.com"));
+    assert!(!host_matches_suffix("googlebot.com", ""));
 }

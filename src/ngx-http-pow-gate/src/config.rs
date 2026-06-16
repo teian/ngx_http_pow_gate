@@ -19,7 +19,7 @@
 //! (verifiers are referenced by name via `verify:<name>` from any context).
 
 use core::mem::offset_of;
-use ngx::core::NGX_CONF_OK;
+use ngx::core::{NGX_CONF_ERROR, NGX_CONF_OK};
 use ngx::ffi::*;
 use ngx::ngx_string;
 use std::os::raw::{c_char, c_void};
@@ -95,6 +95,7 @@ pub struct LocationConf {
     pub hmac_key_file: ngx_str_t, // pow_gate_hmac_key_file <file>
     pub clearance_ttl: time_t,    // pow_gate_clearance_ttl <time>
     pub proof_skew: time_t,       // pow_gate_proof_skew <time>
+    pub require_proof: ngx_flag_t, // pow_gate_require_proof on|off (non-navigation)
     pub endpoint: ngx_str_t,      // pow_gate_endpoint <prefix>
 
     // ── clearance-cookie attributes (pow_gate_cookie_*) ──
@@ -125,7 +126,7 @@ const SERVER_LOCATION: ngx_uint_t = (NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF) as n
 // ───────────────────────────── command table ─────────────────────────────────
 
 #[no_mangle]
-pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 17] = [
+pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 18] = [
     // pow_gate on|off;
     ngx_command_t {
         name: ngx_string!("pow_gate"),
@@ -198,6 +199,16 @@ pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 17] = [
         set: Some(ngx_conf_set_sec_slot),
         conf: NGX_HTTP_LOC_CONF_OFFSET,
         offset: offset_of!(LocationConf, proof_skew),
+        post: ptr::null_mut(),
+    },
+    // pow_gate_require_proof on|off;  (require a valid per-request proof on
+    // non-navigation requests; navigations can't carry a custom header)
+    ngx_command_t {
+        name: ngx_string!("pow_gate_require_proof"),
+        type_: HTTP_SERVER_LOCATION | NGX_CONF_FLAG as ngx_uint_t,
+        set: Some(ngx_conf_set_flag_slot),
+        conf: NGX_HTTP_LOC_CONF_OFFSET,
+        offset: offset_of!(LocationConf, require_proof),
         post: ptr::null_mut(),
     },
     // pow_gate_endpoint <prefix>;
@@ -311,6 +322,7 @@ pub extern "C" fn create_location_conf(cf: *mut ngx_conf_t) -> *mut c_void {
         (*p).difficulty = UNSET_UINT;
         (*p).clearance_ttl = NGX_CONF_UNSET as time_t;
         (*p).proof_skew = NGX_CONF_UNSET as time_t;
+        (*p).require_proof = NGX_CONF_UNSET as ngx_flag_t;
         (*p).cookie_secure = NGX_CONF_UNSET as ngx_flag_t;
         (*p).cookie_httponly = NGX_CONF_UNSET as ngx_flag_t;
         // str fields (page_path, hmac_key_file, endpoint, cookie_*) stay zeroed;
@@ -340,6 +352,7 @@ pub extern "C" fn merge_location_conf(
         merge_str(&mut conf.hmac_key_file, &prev.hmac_key_file, b"");
         merge_sec(&mut conf.clearance_ttl, prev.clearance_ttl, 43200 /* 12h */);
         merge_sec(&mut conf.proof_skew, prev.proof_skew, 5);
+        merge_flag(&mut conf.require_proof, prev.require_proof, 1 /* on */);
         merge_str(&mut conf.endpoint, &prev.endpoint, b"/.pow/");
 
         merge_str(&mut conf.cookie_name, &prev.cookie_name, b"pow_clearance");
@@ -349,9 +362,29 @@ pub extern "C" fn merge_location_conf(
         merge_flag(&mut conf.cookie_secure, prev.cookie_secure, 1 /* on */);
         merge_flag(&mut conf.cookie_httponly, prev.cookie_httponly, 1 /* on */);
 
-        // Load + cache the page once (falls back to the embedded default when the
-        // path is empty). The solver is always the embedded SOLVER_JS, not config.
+        // Where the gate is on, the HMAC key is mandatory and must be usable.
+        // Validate NOW so a misconfigured gate refuses to start instead of
+        // silently running with an empty/weak key (which makes every clearance
+        // and challenge token forgeable). The worker re-reads it at request time
+        // and additionally fails closed (see runtime::load_key / Cfg::key_ok),
+        // which also covers the case where only the worker user can't read it.
         if conf.enabled != 0 {
+            let key_path = crate::response::as_str(&conf.hmac_key_file);
+            let usable = matches!(
+                std::fs::read(key_path),
+                Ok(bytes) if bytes.len() >= crate::runtime::MIN_HMAC_KEY_LEN
+            );
+            if !usable {
+                eprintln!(
+                    "[pow_gate] \"pow_gate on\" requires pow_gate_hmac_key_file to be a \
+                     readable file of at least {} bytes (got path {:?})",
+                    crate::runtime::MIN_HMAC_KEY_LEN,
+                    key_path
+                );
+                return NGX_CONF_ERROR;
+            }
+            // Load + cache the page once (falls back to the embedded default when
+            // the path is empty). The solver is always the embedded SOLVER_JS.
             conf.page_cache = load_page(conf.page_path);
         }
         NGX_CONF_OK

@@ -14,6 +14,9 @@
 //!   4. solve the PoW (pow_gate_core::target::solution_valid)
 //!   5. POST /.pow/verify → 204 + Set-Cookie: pow_clearance=...
 //!   6. GET /  with the cookie (+ X-Pow-Proof) → upstream content
+//!   6b. non-navigation (Sec-Fetch-Mode: cors) without proof → challenged
+//!   6c. non-navigation with a fresh proof → upstream content
+//!   6d. navigation (Sec-Fetch-Mode: navigate) on the cookie alone → upstream
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
 use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
@@ -130,6 +133,61 @@ fn main() {
     }
 
     println!("✓ cleared request reached upstream");
+
+    // 6b. require_proof (default on): a NON-navigation request (Sec-Fetch-Mode
+    //     present and != navigate) WITHOUT a proof must be challenged, even with a
+    //     valid clearance cookie — this is what defeats stolen-cookie replay.
+    let no_proof_fetch = ureq::get(&format!("{base}/"))
+        .set("Cookie", &cookie)
+        .set("Sec-Fetch-Mode", "cors")
+        .set("User-Agent", "e2e-client")
+        .call();
+    let no_proof_body = match no_proof_fetch {
+        Ok(r) => r.into_string().unwrap_or_default(),
+        Err(ureq::Error::Status(_, r)) => r.into_string().unwrap_or_default(),
+        Err(e) => fail(format!("fetch-no-proof GET / failed: {e}")),
+    };
+    if no_proof_body.contains("upstream-content") {
+        fail("non-navigation request without proof reached upstream — replay not blocked");
+    }
+    println!("✓ non-navigation without proof was challenged (require_proof)");
+
+    // 6c. the same non-navigation request WITH a fresh valid proof passes.
+    let ts2 = now();
+    let sig2: Signature = sk.sign(format!("GET / {ts2}").as_bytes());
+    let proof2 = format!("{}.{}", B64.encode(sig2.to_bytes()), ts2);
+    let with_proof = ureq::get(&format!("{base}/"))
+        .set("Cookie", &cookie)
+        .set("Sec-Fetch-Mode", "cors")
+        .set("X-Pow-Proof", &proof2)
+        .set("User-Agent", "e2e-client")
+        .call();
+    let with_proof_body = match with_proof {
+        Ok(r) => r.into_string().unwrap_or_default(),
+        Err(ureq::Error::Status(s, _)) => fail(format!("fetch-with-proof GET / status {s}")),
+        Err(e) => fail(format!("fetch-with-proof GET / failed: {e}")),
+    };
+    if !with_proof_body.contains("upstream-content") {
+        fail("non-navigation request WITH valid proof did NOT reach upstream");
+    }
+    println!("✓ non-navigation with valid proof reached upstream");
+
+    // 6d. a top-level navigation (Sec-Fetch-Mode: navigate) passes on the cookie
+    //     alone — it cannot carry a custom header.
+    let nav = ureq::get(&format!("{base}/"))
+        .set("Cookie", &cookie)
+        .set("Sec-Fetch-Mode", "navigate")
+        .set("User-Agent", "e2e-client")
+        .call();
+    let nav_body = match nav {
+        Ok(r) => r.into_string().unwrap_or_default(),
+        Err(ureq::Error::Status(s, _)) => fail(format!("navigation GET / status {s}")),
+        Err(e) => fail(format!("navigation GET / failed: {e}")),
+    };
+    if !nav_body.contains("upstream-content") {
+        fail("navigation request on cookie alone did NOT reach upstream");
+    }
+    println!("✓ navigation on cookie alone reached upstream");
 
     // 7. verifier: a UA that maps to verify:test reaches upstream WITHOUT solving,
     //    once the background refresher has loaded the IP-range feed (0.0.0.0/0 ⇒

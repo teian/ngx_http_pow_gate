@@ -4,6 +4,29 @@
 
 use std::net::IpAddr;
 
+/// Forward-confirmed-rDNS suffix test with **label-boundary** semantics.
+///
+/// `host` matches `suffix` only when it *is* the suffix or sits strictly below it
+/// on a DNS label boundary: `bot.googlebot.com` matches `googlebot.com`, but the
+/// look-alike `evilgooglebot.com` does **not**. A plain `ends_with` would wrongly
+/// accept the latter, letting an attacker who controls the reverse DNS of their
+/// own IP impersonate a verified good bot.
+///
+/// Comparison is case-insensitive; leading/trailing dots on `suffix` and a
+/// trailing dot on `host` (FQDN form) are ignored, so `.googlebot.com.` and
+/// `googlebot.com` behave identically.
+pub fn host_matches_suffix(host: &str, suffix: &str) -> bool {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    let suffix = suffix
+        .trim()
+        .trim_matches('.')
+        .to_ascii_lowercase();
+    if host.is_empty() || suffix.is_empty() {
+        return false;
+    }
+    host == suffix || host.ends_with(&format!(".{suffix}"))
+}
+
 /// A set of IPv4 + IPv6 CIDR ranges, as (network, mask) pairs.
 #[derive(Default, Clone)]
 pub struct IpRangeSet {

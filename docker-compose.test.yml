@@ -8,7 +8,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-      target: nginx-smoke
+      # glibc (Debian trixie) by default; CI sets SMOKE_TARGET=nginx-smoke-alpine
+      # to run the same handshake against the musl build.
+      target: ${SMOKE_TARGET:-nginx-smoke-debian}
       args:
         NGINX_VERSION: "1.31.1"
     expose:

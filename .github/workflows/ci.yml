@@ -16,23 +16,49 @@ jobs:
       - name: e2e client compiles
         run: cd tests/integration && cargo build --locked || cargo build
 
-  # Build the module against a pinned nginx and verify it loads + parses.
+  # Build the module against a pinned nginx and verify it loads + parses, across
+  # the full matrix: {Debian trixie glibc, Alpine musl} × {amd64, arm64}. Each
+  # cell builds NATIVELY on its own runner (no QEMU) — the digest-pinned base
+  # images are multi-arch indexes, so the same FROM resolves to the runner's arch.
   module:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        libc: [debian, alpine]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
-      - name: build module .so (compiles the FFI shell against nginx)
-        run: docker build -f docker/Dockerfile --target module-build .
-      - name: nginx -t smoke (module loads, directives parse)
-        run: docker build -f docker/Dockerfile --target nginx-smoke .
+      - name: build module .so (${{ matrix.libc }}/${{ matrix.arch }})
+        run: docker build -f docker/Dockerfile --target module-build-${{ matrix.libc }} .
+      - name: nginx -t smoke (${{ matrix.libc }}/${{ matrix.arch }} — module loads, directives parse)
+        run: docker build -f docker/Dockerfile --target nginx-smoke-${{ matrix.libc }} .
 
-  # Live black-box handshake: challenge → solve → verify → cleared.
+  # Live black-box handshake: challenge → solve → verify → cleared, per libc AND
+  # arch — covers musl-specific FFI (sockaddr/body/DNS) and arch-specific codegen.
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     needs: [core, module]
+    strategy:
+      fail-fast: false
+      matrix:
+        libc: [debian, alpine]
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
-      - name: run end-to-end
+      - name: run end-to-end (${{ matrix.libc }}/${{ matrix.arch }})
+        env:
+          SMOKE_TARGET: nginx-smoke-${{ matrix.libc }}
         run: |
           docker compose -f docker-compose.test.yml up --build \
             --abort-on-container-exit --exit-code-from e2e

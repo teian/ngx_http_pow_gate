@@ -1,0 +1,89 @@
+name: release
+
+# Publishes a verifiable build of the nginx module on a version tag, for every
+# {libc × arch}: Debian trixie → glibc, Alpine → musl, each on amd64 and arm64:
+#   1. proves each .so is REPRODUCIBLE (two independent builds → identical hash),
+#   2. attaches SLSA build provenance (verifiable with `gh attestation verify`),
+#   3. signs each keyless with cosign (Sigstore, via the workflow OIDC identity),
+#   4. uploads the .so's + SHA256SUMS + signatures + certificates to the release.
+#
+# arm64 builds run on native arm runners (no QEMU); reproducibility is checked
+# per cell (same arch+libc built twice). Manual run: Actions → release → "Run
+# workflow" (workflow_dispatch).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the release + upload assets
+  id-token: write # OIDC for cosign keyless + provenance attestation
+  attestations: write # actions/attest-build-provenance
+
+jobs:
+  # Independent double build per {libc × arch} → byte-identical .so. Fails the
+  # release if any build is not reproducible, and hands each artifact to publish.
+  reproducible:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { libc: debian, arch: amd64, suffix: glibc-amd64, runner: ubuntu-latest }
+          - { libc: debian, arch: arm64, suffix: glibc-arm64, runner: ubuntu-24.04-arm }
+          - { libc: alpine, arch: amd64, suffix: musl-amd64,  runner: ubuntu-latest }
+          - { libc: alpine, arch: arm64, suffix: musl-arm64,  runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v5
+      - name: build A (${{ matrix.suffix }})
+        run: docker build -f docker/Dockerfile --target module-export-${{ matrix.libc }} --no-cache --output type=local,dest=out-a .
+      - name: build B (${{ matrix.suffix }}, independent)
+        run: docker build -f docker/Dockerfile --target module-export-${{ matrix.libc }} --no-cache --output type=local,dest=out-b .
+      - name: compare hashes
+        run: |
+          sha256sum out-a/*.so out-b/*.so
+          cmp out-a/ngx_http_pow_gate_module.so out-b/ngx_http_pow_gate_module.so \
+            || { echo "::error::module .so (${{ matrix.suffix }}) is not reproducible"; exit 1; }
+          cp out-a/ngx_http_pow_gate_module.so ngx_http_pow_gate_module-${{ matrix.suffix }}.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: module-${{ matrix.suffix }}
+          path: ngx_http_pow_gate_module-${{ matrix.suffix }}.so
+          if-no-files-found: error
+
+  publish:
+    needs: reproducible
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: module-*
+          merge-multiple: true
+      - name: checksums
+        run: cd dist && sha256sum ngx_http_pow_gate_module-*.so | tee SHA256SUMS
+      - name: build provenance attestation (all .so)
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: dist/ngx_http_pow_gate_module-*.so
+      - name: install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: sign each .so (keyless)
+        run: |
+          cd dist
+          for so in ngx_http_pow_gate_module-*.so; do
+            cosign sign-blob --yes \
+              --output-signature "${so}.sig" \
+              --output-certificate "${so}.pem" \
+              "$so"
+          done
+      - name: release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/ngx_http_pow_gate_module-*.so
+            dist/SHA256SUMS
+            dist/*.sig
+            dist/*.pem

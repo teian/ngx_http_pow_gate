@@ -6,9 +6,9 @@ built and exercised against a real nginx — so that part runs in Docker.
 
 ```mermaid
 flowchart TD
-    A[core unit tests<br/>cargo test -p pow-gate-core] --> B[module-build<br/>compile .so vs pinned nginx]
-    B --> C[nginx-smoke<br/>load module, nginx -t]
-    C --> D[e2e<br/>live challenge→solve→verify→cleared]
+    A[core unit tests<br/>cargo test -p pow-gate-core] --> B[module-build-debian / -alpine<br/>compile .so vs pinned nginx, glibc + musl]
+    B --> C[nginx-smoke-debian / -alpine<br/>load module, nginx -t]
+    C --> D[e2e<br/>live challenge→solve→verify→cleared, per libc]
 ```
 
 - [Layout: where tests live](#layout-where-tests-live)
@@ -63,10 +63,12 @@ mismatched proofs fail.
 
 Compiles the dynamic module `.so` against a pinned nginx source. This is the step
 you can't do without a matching nginx — it proves the FFI shell compiles and is
-ABI-bound to that nginx:
+ABI-bound to that nginx. A dynamic module is libc-specific, so there is one stage
+per target:
 
 ```bash
-docker build -f docker/Dockerfile --target module-build .
+docker build -f docker/Dockerfile --target module-build-debian .   # glibc (Debian trixie)
+docker build -f docker/Dockerfile --target module-build-alpine .   # musl  (Alpine)
 ```
 
 Pin `NGINX_VERSION` (build arg) to the nginx you deploy; `--with-compat` gives a
@@ -76,13 +78,15 @@ stable module ABI (see [build.md](build.md)).
 
 ## 3. nginx smoke (Docker)
 
-Loads the freshly built `.so` into the matching `nginx:<version>` image and runs
-`nginx -t` against [docker/nginx.test.conf](../docker/nginx.test.conf), which
-exercises **every** directive. It fails if the module is ABI-incompatible or any
-directive won't parse:
+Loads the freshly built `.so` into the matching `nginx:<version>` image (Debian
+or Alpine) and runs `nginx -t` against
+[docker/nginx.test.conf](../docker/nginx.test.conf), which exercises **every**
+directive. It fails if the module is ABI-incompatible or any directive won't
+parse:
 
 ```bash
-docker build -f docker/Dockerfile --target nginx-smoke .
+docker build -f docker/Dockerfile --target nginx-smoke-debian .   # glibc
+docker build -f docker/Dockerfile --target nginx-smoke-alpine .   # musl
 ```
 
 ---
@@ -119,7 +123,13 @@ cookie, and a cleared request reaches the upstream.
 
 [.github/workflows/ci.yml](../.github/workflows/ci.yml) runs the same three
 layers: a fast `core` job (engine tests + e2e client compiles), a `module` job
-(build `.so` + `nginx -t`), and an `e2e` job (the live handshake).
+(build `.so` + `nginx -t`), and an `e2e` job (the live handshake). The `module`
+and `e2e` jobs run as a **matrix of `{libc × arch}`** — `debian`→glibc,
+`alpine`→musl, each on `amd64` and `arm64` (native arm runners, no QEMU) — so each
+release ships four `.so`s, each proven to load on its target. Tagged
+releases additionally run [release.yml](../.github/workflows/release.yml)
+(reproducible double build + provenance + cosign + checksums) — see
+[build.md](build.md#verifiable-builds).
 
 ---
 
@@ -128,9 +138,9 @@ layers: a fast `core` job (engine tests + e2e client compiles), a `module` job
 | Layer        | Proves                                                              | Needs   |
 | ------------ | ------------------------------------------------------------------ | ------- |
 | core tests   | the crypto/protocol is correct and the wire contract is pinned     | Rust    |
-| module-build | the FFI shell compiles and is ABI-bound to the target nginx        | Docker  |
-| nginx-smoke  | the module loads and every directive parses                        | Docker  |
-| e2e          | the live request flow works end to end against real nginx          | Docker  |
+| module-build-{debian,alpine} | the FFI shell compiles + is ABI-bound to nginx, on glibc and musl | Docker  |
+| nginx-smoke-{debian,alpine}  | the module loads and every directive parses, on both libc          | Docker  |
+| e2e          | the live request flow works end to end against real nginx (per libc) | Docker  |
 
 > Status (verified): **all four layers are green, nothing left as scaffold.** The
 > engine is unit-tested, the module compiles against nginx 1.31.1, loads

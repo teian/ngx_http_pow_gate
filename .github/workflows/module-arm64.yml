@@ -1,0 +1,24 @@
+name: module-arm64
+
+# Builds the dynamic module .so on arm64 (native arm runner, no QEMU) for both
+# libc targets (Debian trixie glibc + Alpine musl) and verifies it loads + parses
+# (`nginx -t`). Split into its own workflow so arm64 carries a dedicated status
+# badge. amd64 is module-amd64.yml.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        libc: [debian, alpine]
+    steps:
+      - uses: actions/checkout@v5
+      - name: build module .so (${{ matrix.libc }}/arm64)
+        run: docker build -f docker/Dockerfile --target module-build-${{ matrix.libc }} .
+      - name: nginx -t smoke (${{ matrix.libc }}/arm64 — module loads, directives parse)
+        run: docker build -f docker/Dockerfile --target nginx-smoke-${{ matrix.libc }} .

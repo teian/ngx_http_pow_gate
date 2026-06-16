@@ -1,6 +1,8 @@
 # ngx_http_pow_gate_module
 
 [![ci](https://github.com/teian/ngx_http_pow_gate/actions/workflows/ci.yml/badge.svg)](https://github.com/teian/ngx_http_pow_gate/actions/workflows/ci.yml)
+[![module-amd64](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-amd64.yml/badge.svg)](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-amd64.yml)
+[![module-arm64](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-arm64.yml/badge.svg)](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-arm64.yml)
 
 A native **nginx dynamic module** that puts a **proof-of-work (PoW) gate** in front
 of your sites to deter scrapers, AI crawlers, and abusive bots — while letting

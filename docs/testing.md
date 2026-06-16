@@ -121,15 +121,19 @@ cookie, and a cleared request reaches the upstream.
 
 ## CI
 
-[.github/workflows/ci.yml](../.github/workflows/ci.yml) runs the same three
-layers: a fast `core` job (engine tests + e2e client compiles), a `module` job
-(build `.so` + `nginx -t`), and an `e2e` job (the live handshake). The `module`
-and `e2e` jobs run as a **matrix of `{libc × arch}`** — `debian`→glibc,
-`alpine`→musl, each on `amd64` and `arm64` (native arm runners, no QEMU) — so each
-release ships four `.so`s, each proven to load on its target. Tagged
-releases additionally run [release.yml](../.github/workflows/release.yml)
-(reproducible double build + provenance + cosign + checksums) — see
-[build.md](build.md#verifiable-builds).
+CI is split across a few workflows:
+
+- [ci.yml](../.github/workflows/ci.yml) — a fast `core` job (engine tests + e2e
+  client compiles) and an `e2e` job (the live handshake) as a **matrix of
+  `{libc × arch}`** (`debian`→glibc, `alpine`→musl, on `amd64` and `arm64`).
+- [module-amd64.yml](../.github/workflows/module-amd64.yml) /
+  [module-arm64.yml](../.github/workflows/module-arm64.yml) — build the `.so` +
+  `nginx -t` for both libc on each architecture. Split per arch so each carries
+  its own status badge (native arm runners, no QEMU; digest-pinned multi-arch
+  base images resolve to the runner's arch).
+- [release.yml](../.github/workflows/release.yml) — on a tag: reproducible double
+  build + provenance + cosign + checksums for all four `{libc × arch}` `.so`s; see
+  [build.md](build.md#verifiable-builds).
 
 ---
 

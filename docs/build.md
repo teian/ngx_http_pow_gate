@@ -236,8 +236,8 @@ nginx's libc **and** CPU (`uname -m`: `x86_64` → amd64, `aarch64` → arm64):
 
 The [`docker/Dockerfile`](../docker/Dockerfile) `module-build-debian` /
 `module-build-alpine` stages are deterministic: base images are pinned by
-**digest**, the nginx source by **SHA256**, every crate by **`Cargo.lock`
-(`--locked`)**, `clang`/`libclang` to a major version (bindgen output depends on
+**digest**, the nginx source by **SHA256**, every crate by the committed
+**`Cargo.lock`**, `clang`/`libclang` to a major version (bindgen output depends on
 it), and the build sets `SOURCE_DATE_EPOCH`, `CARGO_INCREMENTAL=0`,
 `codegen-units=1`, and `--remap-path-prefix` (no absolute paths leak in). Same
 inputs → byte-identical output.

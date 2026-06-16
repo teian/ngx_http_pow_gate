@@ -67,14 +67,16 @@ WORKDIR /src
 COPY . .
 # Fetch + verify + CONFIGURE the matching nginx (nginx-sys needs the objs/ a
 # `./configure` produces). --with-compat gives a stable module ABI so the runtime
-# nginx package accepts the .so. `--locked` pins every crate to Cargo.lock.
+# nginx package accepts the .so. Builds use the committed Cargo.lock (not
+# `--locked`: that couples the build to one cargo version's resolver — cargo
+# still honours the lock and only updates it if Cargo.toml requires it).
 RUN set -eux; \
     curl -fsSL "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" -o /tmp/nginx.tar.gz; \
     echo "${NGINX_SHA256}  /tmp/nginx.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/nginx.tar.gz -C /tmp; \
     cd "/tmp/nginx-${NGINX_VERSION}" && ./configure --with-compat && cd /src; \
     export NGINX_SOURCE_DIR="/tmp/nginx-${NGINX_VERSION}"; \
-    cargo build --release --locked -p ngx-http-pow-gate; \
+    cargo build --release -p ngx-http-pow-gate; \
     cp target/release/libngx_http_pow_gate.so /ngx_http_pow_gate_module.so
 
 # ──────────────────────── 2b. build the module (Alpine) ──────────────────────
@@ -108,7 +110,7 @@ RUN set -eux; \
     tar -xzf /tmp/nginx.tar.gz -C /tmp; \
     cd "/tmp/nginx-${NGINX_VERSION}" && ./configure --with-compat && cd /src; \
     export NGINX_SOURCE_DIR="/tmp/nginx-${NGINX_VERSION}"; \
-    cargo build --release --locked -p ngx-http-pow-gate; \
+    cargo build --release -p ngx-http-pow-gate; \
     cp target/release/libngx_http_pow_gate.so /ngx_http_pow_gate_module.so
 
 # ─────────────── 2c. export just the .so (for `--output type=local`) ──────────

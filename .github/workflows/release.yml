@@ -26,8 +26,6 @@ jobs:
   # release if any build is not reproducible, and hands each artifact to publish.
   reproducible:
     runs-on: ${{ matrix.runner }}
-    env:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     strategy:
       fail-fast: false
       matrix:
@@ -38,12 +36,6 @@ jobs:
           - { libc: alpine, arch: arm64, suffix: musl-arm64,  runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v5
-      - name: log in to Docker Hub (avoids anonymous pull rate limits)
-        if: env.DOCKERHUB_USERNAME != ''
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: build A (${{ matrix.suffix }})
         run: docker build -f docker/Dockerfile --target module-export-${{ matrix.libc }} --no-cache --output type=local,dest=out-a .
       - name: build B (${{ matrix.suffix }}, independent)

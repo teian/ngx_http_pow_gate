@@ -266,6 +266,11 @@ CI enforces this on every release: the `reproducible` job builds each `.so`
 > comes from the distro mirror (apt on trixie, apk on Alpine). For full
 > hermeticity, pin packages via `snapshot.debian.org` / a fixed Alpine repo.
 
+Base images are pulled through `mirror.gcr.io` (Google's pull-through cache of
+Docker Hub) to avoid Docker Hub's anonymous pull rate limit on shared CI IPs —
+the digests are unchanged, so this does not affect reproducibility. Override with
+`--build-arg REGISTRY=docker.io/library` to pull straight from Docker Hub.
+
 ### Verify provenance (SLSA)
 
 Each release `.so` has a build-provenance attestation tying it to the workflow,

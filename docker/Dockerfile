@@ -20,6 +20,11 @@
 # Cargo.lock + toolchain. Update a digest with `docker buildx imagetools inspect
 # <image:tag>`; update NGINX_SHA256 from https://nginx.org/download/.
 #
+# Base images are pulled through mirror.gcr.io (Google's public pull-through cache
+# of Docker Hub) to dodge Docker Hub's anonymous pull rate limit on shared CI IPs.
+# Digests are unchanged (same content), so reproducibility pins still hold.
+# Override REGISTRY=docker.io/library to go straight to Docker Hub.
+ARG REGISTRY=mirror.gcr.io/library
 # Rust 1.85+ is required: a transitive crypto dep (base64ct) uses edition 2024.
 ARG RUST_VERSION=1.90
 ARG RUST_TRIXIE_DIGEST=sha256:e227f20ec42af3ea9a3c9c1dd1b2012aa15f12279b5e9d5fb890ca1c2bb5726c
@@ -35,14 +40,14 @@ ARG NGINX_SHA256=9fcaaeb8f22544b09a19a761f3412c4112215422401634bebdd1296a403cc4b
 # paths leak into the .so. (Set per stage — ENV does not cross FROM.)
 
 # ───────────────────────────── 1. core unit tests ────────────────────────────
-FROM rust:${RUST_VERSION}-trixie@${RUST_TRIXIE_DIGEST} AS core-test
+FROM ${REGISTRY}/rust:${RUST_VERSION}-trixie@${RUST_TRIXIE_DIGEST} AS core-test
 WORKDIR /src
 COPY src/pow-gate-core/ src/pow-gate-core/
 # Build & test the engine alone — no nginx needed, fast and deterministic.
 RUN cd src/pow-gate-core && cargo test --locked || cargo test
 
 # ──────────────────────── 2a. build the module (Debian) ──────────────────────
-FROM rust:${RUST_VERSION}-trixie@${RUST_TRIXIE_DIGEST} AS module-build-debian
+FROM ${REGISTRY}/rust:${RUST_VERSION}-trixie@${RUST_TRIXIE_DIGEST} AS module-build-debian
 ARG NGINX_VERSION
 ARG NGINX_SHA256
 # clang/libclang are pinned to a major version: nginx-sys runs bindgen, whose
@@ -73,7 +78,7 @@ RUN set -eux; \
     cp target/release/libngx_http_pow_gate.so /ngx_http_pow_gate_module.so
 
 # ──────────────────────── 2b. build the module (Alpine) ──────────────────────
-FROM rust:${RUST_VERSION}-alpine@${RUST_ALPINE_DIGEST} AS module-build-alpine
+FROM ${REGISTRY}/rust:${RUST_VERSION}-alpine@${RUST_ALPINE_DIGEST} AS module-build-alpine
 ARG NGINX_VERSION
 ARG NGINX_SHA256
 # musl toolchain: build-base (gcc/make/musl headers) + the -dev libs nginx's
@@ -120,7 +125,7 @@ COPY --from=module-build-alpine /ngx_http_pow_gate_module.so /ngx_http_pow_gate_
 # 32-byte key is world-readable (644) ONLY because this test container's nginx
 # worker may run unprivileged and the gate fails closed if it can't read the key.
 # Production guidance stays 600 + `chown nginx` (see docs/configuration.md).
-FROM nginx:${NGINX_VERSION}@${NGINX_DEBIAN_DIGEST} AS nginx-smoke-debian
+FROM ${REGISTRY}/nginx:${NGINX_VERSION}@${NGINX_DEBIAN_DIGEST} AS nginx-smoke-debian
 COPY --from=module-build-debian /ngx_http_pow_gate_module.so /etc/nginx/modules/ngx_http_pow_gate_module.so
 COPY docker/nginx.test.conf /etc/nginx/nginx.conf
 RUN install -d -m 755 /etc/pow && head -c 32 /dev/urandom > /etc/pow/hmac.key && chmod 644 /etc/pow/hmac.key
@@ -131,7 +136,7 @@ RUN install -d /var/www \
 # Fails the build if the module is ABI-incompatible or any directive won't parse.
 RUN nginx -t
 
-FROM nginx:${NGINX_VERSION}-alpine@${NGINX_ALPINE_DIGEST} AS nginx-smoke-alpine
+FROM ${REGISTRY}/nginx:${NGINX_VERSION}-alpine@${NGINX_ALPINE_DIGEST} AS nginx-smoke-alpine
 COPY --from=module-build-alpine /ngx_http_pow_gate_module.so /etc/nginx/modules/ngx_http_pow_gate_module.so
 COPY docker/nginx.test.conf /etc/nginx/nginx.conf
 RUN install -d -m 755 /etc/pow && head -c 32 /dev/urandom > /etc/pow/hmac.key && chmod 644 /etc/pow/hmac.key
@@ -146,7 +151,7 @@ RUN nginx -t
 # reusing pow-gate-core to solve the PoW and sign proofs (same crate the server
 # uses). Run it against a live nginx via docker-compose.test.yml. The client is
 # libc-agnostic; it exercises whichever nginx (glibc/musl) it's pointed at.
-FROM rust:${RUST_VERSION}-trixie@${RUST_TRIXIE_DIGEST} AS e2e
+FROM ${REGISTRY}/rust:${RUST_VERSION}-trixie@${RUST_TRIXIE_DIGEST} AS e2e
 RUN apt-get update && apt-get install -y --no-install-recommends libssl-dev pkg-config ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
@@ -159,7 +164,7 @@ CMD ["/src/tests/integration/target/release/pow-gate-e2e"]
 # ───────────────────────────── 5. perf load client ───────────────────────────
 # Builds the load generator (docs/performance.md). Run against a live nginx via
 # docker-compose.perf.yml. Knobs via PERF_DURATION / PERF_CONCURRENCY / PERF_MODES.
-FROM rust:${RUST_VERSION}-trixie@${RUST_TRIXIE_DIGEST} AS perf
+FROM ${REGISTRY}/rust:${RUST_VERSION}-trixie@${RUST_TRIXIE_DIGEST} AS perf
 RUN apt-get update && apt-get install -y --no-install-recommends libssl-dev pkg-config ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src

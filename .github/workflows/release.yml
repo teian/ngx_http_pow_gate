@@ -45,11 +45,16 @@ jobs:
           sha256sum out-a/*.so out-b/*.so
           cmp out-a/ngx_http_pow_gate_module.so out-b/ngx_http_pow_gate_module.so \
             || { echo "::error::module .so (${{ matrix.suffix }}) is not reproducible"; exit 1; }
-          cp out-a/ngx_http_pow_gate_module.so ngx_http_pow_gate_module-${{ matrix.suffix }}.so
+          # Artifact name carries both version axes: the module .so only loads
+          # into the exact nginx version it was built against.
+          MODULE_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' src/ngx-http-pow-gate/Cargo.toml)
+          NGINX_VERSION=$(sed -n 's/^ARG NGINX_VERSION=//p' docker/Dockerfile)
+          cp out-a/ngx_http_pow_gate_module.so \
+            "ngx_http_pow_gate_module-${MODULE_VERSION}-nginx${NGINX_VERSION}-${{ matrix.suffix }}.so"
       - uses: actions/upload-artifact@v4
         with:
           name: module-${{ matrix.suffix }}
-          path: ngx_http_pow_gate_module-${{ matrix.suffix }}.so
+          path: ngx_http_pow_gate_module-*.so
           if-no-files-found: error
 
   publish:

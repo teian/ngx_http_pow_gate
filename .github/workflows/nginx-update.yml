@@ -1,0 +1,57 @@
+name: nginx-update
+
+# Daily check for a new nginx release. When one appears, scripts/update-nginx.sh
+# refreshes every pin (version, tarball SHA256, image digests), the module is
+# proven to still build and load against it (glibc + musl smoke), and a PR is
+# opened. Releases stay MANUAL: review + merge the PR, then tag when you want a
+# release — nothing here pushes tags or publishes artifacts.
+#
+# Note: PRs created with the default GITHUB_TOKEN do not trigger other workflows
+# (GitHub's recursion guard), so ci.yml won't run on the PR automatically. Add a
+# fine-grained PAT with contents+pull-requests write as the NGINX_UPDATE_TOKEN
+# secret to get full CI on the PR; without it, the smoke builds below are the
+# pre-PR validation.
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: check for a new nginx + update pins
+        id: update
+        run: ./scripts/update-nginx.sh
+      - name: smoke (glibc)
+        if: steps.update.outputs.updated == 'true'
+        run: docker build -f docker/Dockerfile --target nginx-smoke-debian .
+      - name: smoke (musl)
+        if: steps.update.outputs.updated == 'true'
+        run: docker build -f docker/Dockerfile --target nginx-smoke-alpine .
+      - name: open PR
+        if: steps.update.outputs.updated == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.NGINX_UPDATE_TOKEN || github.token }}
+          branch: nginx-update/${{ steps.update.outputs.new }}
+          commit-message: "build: bump nginx ${{ steps.update.outputs.old }} → ${{ steps.update.outputs.new }}"
+          title: "build: bump nginx ${{ steps.update.outputs.old }} → ${{ steps.update.outputs.new }}"
+          body: |
+            Automated nginx bump: **${{ steps.update.outputs.old }} → ${{ steps.update.outputs.new }}**
+
+            Updated by `scripts/update-nginx.sh`:
+            - `docker/Dockerfile` — `NGINX_VERSION`, tarball `NGINX_SHA256`, image digests (Debian + Alpine, resolved via `docker buildx imagetools inspect`)
+            - `.cargo/config.toml`, `docker-compose.{test,perf}.yml`, `README.md`, `docs/`
+
+            Pre-validated in this workflow run: module builds against the new
+            nginx and loads (`nginx -t`) on glibc **and** musl.
+
+            After merge, a release stays manual — tag `v<module-version>` when
+            you want one; `release.yml` then builds, signs, and publishes.

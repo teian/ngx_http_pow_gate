@@ -382,6 +382,8 @@ rather than wrongly allowing — so it is safe to ship the gate without it.
   (engine tests → build → `nginx -t` → live e2e handshake).
 - **[docs/performance.md](docs/performance.md)** — per-request cost,
   microbenchmarks, the HTTP load suite, and the ECDSA-proof bottleneck.
+- **[docs/releasing.md](docs/releasing.md)** — versioning (module vs. nginx
+  axis), tag/title/artifact conventions, cutting a release, automated nginx bumps.
 
 ---
 

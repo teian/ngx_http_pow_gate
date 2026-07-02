@@ -10,4 +10,4 @@
 # documented `NGINX_SOURCE_DIR=<configured tree>` production workflow is
 # unaffected (that path never consults NGX_VERSION).
 [env]
-NGX_VERSION = "1.31.1"
+NGX_VERSION = "1.31.2"

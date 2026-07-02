@@ -59,9 +59,9 @@ sudo dnf install -y @development-tools clang-devel pcre2-devel zlib-devel openss
 
 ```bash
 # 1. point the build at a CONFIGURED nginx source (nginx-sys needs its objs/)
-curl -fsSL https://nginx.org/download/nginx-1.31.1.tar.gz | tar -xz -C "$HOME/src"
-( cd "$HOME/src/nginx-1.31.1" && ./configure --with-compat )
-export NGINX_SOURCE_DIR="$HOME/src/nginx-1.31.1"
+curl -fsSL https://nginx.org/download/nginx-1.31.2.tar.gz | tar -xz -C "$HOME/src"
+( cd "$HOME/src/nginx-1.31.2" && ./configure --with-compat )
+export NGINX_SOURCE_DIR="$HOME/src/nginx-1.31.2"
 
 # 2. build the optimized shared object (workspace: select the module crate)
 cargo build --release -p ngx-http-pow-gate
@@ -85,7 +85,7 @@ environment variables — set them before `cargo build`:
 | Variable               | Effect                                                                   |
 | ---------------------- | ------------------------------------------------------------------------ |
 | `NGINX_SOURCE_DIR`     | Use an unpacked **and `./configure`-d** nginx tree (it needs the `objs/`). |
-| `NGX_VERSION`          | Which nginx version to download if no source dir is given (needs `ngx/vendored`; defaults to `1.31.1` via [`.cargo/config.toml`](../.cargo/config.toml)). |
+| `NGX_VERSION`          | Which nginx version to download if no source dir is given (needs `ngx/vendored`; defaults to `1.31.2` via [`.cargo/config.toml`](../.cargo/config.toml)). |
 | `NGINX_BUILD_DIR`      | Where to place/find the configured build output (the `objs/` dir).       |
 | `NGX_CONFIGURE_ARGS`   | The `./configure` flags — **must mirror your target nginx** (see below). |
 
@@ -105,7 +105,7 @@ environment variables — set them before `cargo build`:
 
    ```bash
    nginx -V
-   # nginx version: nginx/1.31.1
+   # nginx version: nginx/1.31.2
    # built with OpenSSL ...
    # configure arguments: --prefix=/etc/nginx --with-compat --with-http_ssl_module ...
    ```
@@ -117,7 +117,7 @@ environment variables — set them before `cargo build`:
    flag:
 
    ```bash
-   export NGX_VERSION=1.31.1   # defaults to 1.31.1 via .cargo/config.toml
+   export NGX_VERSION=1.31.2   # defaults to 1.31.2 via .cargo/config.toml
    export NGX_CONFIGURE_ARGS="--with-compat"
    cargo build --release --features ngx/vendored
    ```
@@ -169,11 +169,11 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /src
 COPY . .
 # nginx-sys needs a CONFIGURED nginx (the objs/ that ./configure produces):
-RUN curl -fsSL https://nginx.org/download/nginx-1.31.1.tar.gz | tar -xz -C /tmp \
- && (cd /tmp/nginx-1.31.1 && ./configure --with-compat) \
- && NGINX_SOURCE_DIR=/tmp/nginx-1.31.1 cargo build --release
+RUN curl -fsSL https://nginx.org/download/nginx-1.31.2.tar.gz | tar -xz -C /tmp \
+ && (cd /tmp/nginx-1.31.2 && ./configure --with-compat) \
+ && NGINX_SOURCE_DIR=/tmp/nginx-1.31.2 cargo build --release
 
-FROM nginx:1.31.1          # MUST match the nginx built against above
+FROM nginx:1.31.2          # MUST match the nginx built against above
 COPY --from=build /src/target/release/libngx_http_pow_gate.so \
      /etc/nginx/modules/ngx_http_pow_gate_module.so
 # add your nginx.conf + /etc/pow/hmac.key via secrets/volume
@@ -205,7 +205,7 @@ at config-test time, before you touch live traffic.
 | `module ... is not binary compatible`                | Built against a different nginx version/flags. Rebuild to match `nginx -V`. |
 | `dlopen() ... undefined symbol`                      | Missing/extra nginx module in `configure` args, or wrong nginx source.      |
 | `cannot find -lclang` / bindgen errors               | Install `libclang-dev` (Debian) / `clang-devel` (Fedora).                   |
-| build can't locate nginx source                      | Set `NGINX_SOURCE_DIR`, or build `--features ngx/vendored` (downloads `NGX_VERSION`, default 1.31.1). |
+| build can't locate nginx source                      | Set `NGINX_SOURCE_DIR`, or build `--features ngx/vendored` (downloads `NGX_VERSION`, default 1.31.2). |
 | `load_module` → `unknown directive`                  | `load_module` must be in the **main** context, above `http {}`.             |
 | 403 for everyone behind a load balancer              | Configure `set_real_ip_from` / `real_ip_header` so `$remote_addr` is real.  |
 | Challenge never completes                             | Check the browser console + that `{endpoint}solver.js` / `challenge` / `verify` return 200; the clock skew vs `pow_gate_proof_skew`. |

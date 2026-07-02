@@ -1,8 +1,8 @@
 # Rust
 /target
 **/*.rs.bk
-# this is a dynamic module, not a bin — lockfile is not committed
-Cargo.lock
+# Cargo.lock IS committed: the reproducible-build pipeline (docker/Dockerfile,
+# release.yml) pins dependency resolution to it.
 
 # nginx build artifacts (when building against a local nginx source tree)
 /.nginx

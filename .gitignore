@@ -9,3 +9,6 @@
 /nginx-*/
 *.so
 dist-local/
+
+# Playwright MCP session artifacts (snapshots from browser-driven testing)
+.playwright-mcp/

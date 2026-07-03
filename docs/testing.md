@@ -17,6 +17,7 @@ flowchart TD
 - [3. nginx smoke (Docker)](#3-nginx-smoke-docker)
 - [4. End-to-end (Docker Compose)](#4-end-to-end-docker-compose)
 - [One command](#one-command)
+- [Manual testing (browser / curl)](#manual-testing-browser--curl)
 - [CI](#ci)
 - [What each layer proves](#what-each-layer-proves)
 
@@ -116,6 +117,44 @@ cookie, and a cleared request reaches the upstream.
 ./scripts/test.sh core     # just the engine tests (fast)
 ./scripts/test.sh docker   # build + smoke + e2e
 ```
+
+---
+
+## Manual testing (browser / curl)
+
+The automated e2e proves the protocol; the manual sandbox is for everything a
+human notices — the challenge page rendering, solver progress, cookie behaviour
+across reloads, a custom `pow_gate_page`. It publishes nginx + the module on
+`http://localhost:12222` (an unassuming port, so it does not collide with the
+usual 8080 tenants):
+
+```bash
+./scripts/dev.sh up       # build + start, prints what to try
+./scripts/dev.sh reload   # apply an edited docker/nginx.dev.conf (no rebuild)
+./scripts/dev.sh logs     # follow nginx logs
+./scripts/dev.sh down     # stop + remove
+```
+
+Open `http://localhost:12222/` in a browser: you get the challenge page, the
+solver runs (difficulty 5000 — a browser hashes far slower than native, so this
+still shows the progress bar for a few seconds), and after
+verification a reload serves the stubbed upstream content via the clearance
+cookie. Useful curl checks (also printed by `dev.sh up`):
+
+| Request | Expected |
+| --- | --- |
+| `curl -i localhost:12222/` | challenge HTML — no clearance |
+| `curl localhost:12222/healthz` | `ok` — excluded path, never gated |
+| `curl -A verifierbot localhost:12222/` | upstream content — verified good bot |
+| `curl -iA denybot localhost:12222/` | denied |
+
+Unlike `nginx.test.conf` (baked into the image), [docker/nginx.dev.conf](../docker/nginx.dev.conf)
+is **volume-mounted**: tweak difficulty, cookies, decisions, or point
+`pow_gate_page` at a mounted custom page (see the commented lines there and in
+[docker-compose.dev.yml](../docker-compose.dev.yml)), then `./scripts/dev.sh reload`.
+Only module code changes need a rebuild (`./scripts/dev.sh up`). Knobs:
+`DEV_PORT=9090` for another host port, `DEV_TARGET=nginx-smoke-alpine` for the
+musl build.
 
 ---
 

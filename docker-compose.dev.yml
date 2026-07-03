@@ -1,0 +1,29 @@
+# Manual test sandbox: nginx + the module on http://localhost:8080 so you can
+# poke the gate with a real browser (challenge page, solver progress, clearance
+# cookie) or curl. Driven by ./scripts/dev.sh — see docs/testing.md.
+#
+# The config is volume-mounted (docker/nginx.dev.conf): edit it and
+# `./scripts/dev.sh reload` — no rebuild. Rebuild only for module code changes.
+
+# Own project name: without it this shares the default project (dir name) with
+# docker-compose.test.yml, and a test run replaces the running sandbox container.
+name: ngx-pow-dev
+
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      # DEV_TARGET=nginx-smoke-alpine to poke the musl build instead
+      target: ${DEV_TARGET:-nginx-smoke-debian}
+      args:
+        NGINX_VERSION: "1.31.2"
+    ports:
+      # 12222 to stay clear of the usual 8080 suspects (other local stacks)
+      - "${DEV_PORT:-12222}:8080"
+    volumes:
+      - ./docker/nginx.dev.conf:/etc/nginx/nginx.conf:ro
+      # To test the pow_gate_page directive, mount a page and uncomment the
+      # directive in nginx.dev.conf (assets/challenge.html is the embedded
+      # default — copy it and edit to see your version served):
+      # - ./assets/challenge.html:/etc/pow/challenge.html:ro

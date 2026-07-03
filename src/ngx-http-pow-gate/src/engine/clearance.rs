@@ -14,11 +14,13 @@ use crate::runtime::{self, Cfg};
 ///
 /// * A present `X-Pow-Proof` header is always verified against the cookie-bound
 ///   key within `proof_skew`; a present-but-bad proof fails closed.
-/// * An absent proof is accepted only when the request is a top-level navigation
-///   (which cannot send a custom header) or when `pow_gate_require_proof` is off.
-///   With the requirement on (default), a non-navigation request *without* a
-///   valid proof is rejected — that is what stops a stolen clearance cookie from
-///   being replayed by fetch/XHR/CLI tooling.
+/// * An absent proof is accepted unless `pow_gate_require_proof` is on (off by
+///   default — enabling it needs page-side integration to sign the proofs)
+///   *and* the request is one that could have carried the header in the first
+///   place — a `fetch()`/XHR call ([`can_carry_proof`]). Navigations and
+///   tag-driven subresource loads (`<script>`, `<img>`, `<link>`, fonts, …)
+///   cannot attach custom headers, so they pass on the cookie alone; demanding
+///   a proof of them would challenge every asset on a gated page.
 pub fn has_valid_clearance(r: &Request, cfg: &Cfg) -> bool {
     // No usable HMAC key -> never trust a clearance cookie (an empty/known key
     // would let anyone forge one). Fail closed: the client is challenged.
@@ -50,22 +52,28 @@ pub fn has_valid_clearance(r: &Request, cfg: &Cfg) -> bool {
             let (method, path) = unsafe { runtime::method_and_path(raw) };
             proof::verify(&pk, &method, &path, ts, &sig, now, cfg.proof_skew)
         }
-        // No proof header. Accept on the cookie alone only for navigations (they
-        // cannot carry a custom header) or when the requirement is disabled.
-        None => !cfg.require_proof || is_navigation(r),
+        // No proof header. Accept on the cookie alone unless this request could
+        // have carried one (fetch/XHR) and the requirement is on.
+        None => !cfg.require_proof || !can_carry_proof(r),
     }
 }
 
-/// Is this a top-level navigation? Browsers signal navigations with
-/// `Sec-Fetch-Mode: navigate`. A request with **no** Sec-Fetch metadata is also
-/// treated as a navigation: non-Sec-Fetch clients (older browsers, non-browser
-/// agents) would never attach the proof header on a navigation, so requiring it
-/// of them would lock them out. Modern fetch/XHR send a non-`navigate` mode and
-/// therefore must carry a proof when `pow_gate_require_proof` is on.
-fn is_navigation(r: &Request) -> bool {
-    match runtime::header(r, "sec-fetch-mode") {
-        Some(mode) => mode.eq_ignore_ascii_case("navigate"),
-        None => true,
+/// Could this request have attached the `X-Pow-Proof` header?
+///
+/// Only requests issued by page JavaScript — `fetch()` and XHR — can carry a
+/// custom header. Browsers mark exactly those with `Sec-Fetch-Dest: empty`;
+/// every other destination (`document`, `script`, `style`, `image`, `font`, …)
+/// is a navigation or a tag-driven subresource load with no way to add one.
+/// Note `Sec-Fetch-Mode` is *not* a usable signal here: fonts, module scripts
+/// and preloads are `mode: cors` yet still cannot carry headers.
+///
+/// A request with **no** Sec-Fetch metadata (older browsers, non-browser
+/// agents) is treated as unable to carry a proof, so it passes on the cookie
+/// alone — requiring a header such clients can never send would lock them out.
+fn can_carry_proof(r: &Request) -> bool {
+    match runtime::header(r, "sec-fetch-dest") {
+        Some(dest) => dest.eq_ignore_ascii_case("empty"),
+        None => false,
     }
 }
 

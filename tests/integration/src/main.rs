@@ -14,9 +14,14 @@
 //!   4. solve the PoW (pow_gate_core::target::solution_valid)
 //!   5. POST /.pow/verify → 204 + Set-Cookie: pow_clearance=...
 //!   6. GET /  with the cookie (+ X-Pow-Proof) → upstream content
-//!   6b. non-navigation (Sec-Fetch-Mode: cors) without proof → challenged
-//!   6c. non-navigation with a fresh proof → upstream content
+//!   6b. fetch/XHR (Sec-Fetch-Dest: empty) without proof → challenged
+//!       (require_proof is enabled on / in the test config)
+//!   6c. fetch/XHR with a fresh proof → upstream content
 //!   6d. navigation (Sec-Fetch-Mode: navigate) on the cookie alone → upstream
+//!   6e. tag subresources (image / font / module script) on the cookie alone
+//!       → upstream (they cannot carry the proof header)
+//!   6f. /default-proof (require_proof unset ⇒ default off): fetch/XHR on the
+//!       cookie alone → upstream
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
 use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
@@ -134,12 +139,14 @@ fn main() {
 
     println!("✓ cleared request reached upstream");
 
-    // 6b. require_proof (default on): a NON-navigation request (Sec-Fetch-Mode
-    //     present and != navigate) WITHOUT a proof must be challenged, even with a
-    //     valid clearance cookie — this is what defeats stolen-cookie replay.
+    // 6b. require_proof (enabled on / in the test config): a fetch/XHR request
+    //     (Sec-Fetch-Dest: empty — the only kind that CAN attach a custom
+    //     header) WITHOUT a proof must be challenged, even with a valid
+    //     clearance cookie — this is what defeats stolen-cookie replay.
     let no_proof_fetch = ureq::get(&format!("{base}/"))
         .set("Cookie", &cookie)
         .set("Sec-Fetch-Mode", "cors")
+        .set("Sec-Fetch-Dest", "empty")
         .set("User-Agent", "e2e-client")
         .call();
     let no_proof_body = match no_proof_fetch {
@@ -148,17 +155,18 @@ fn main() {
         Err(e) => fail(format!("fetch-no-proof GET / failed: {e}")),
     };
     if no_proof_body.contains("upstream-content") {
-        fail("non-navigation request without proof reached upstream — replay not blocked");
+        fail("fetch/XHR request without proof reached upstream — replay not blocked");
     }
-    println!("✓ non-navigation without proof was challenged (require_proof)");
+    println!("✓ fetch/XHR without proof was challenged (require_proof)");
 
-    // 6c. the same non-navigation request WITH a fresh valid proof passes.
+    // 6c. the same fetch/XHR request WITH a fresh valid proof passes.
     let ts2 = now();
     let sig2: Signature = sk.sign(format!("GET / {ts2}").as_bytes());
     let proof2 = format!("{}.{}", B64.encode(sig2.to_bytes()), ts2);
     let with_proof = ureq::get(&format!("{base}/"))
         .set("Cookie", &cookie)
         .set("Sec-Fetch-Mode", "cors")
+        .set("Sec-Fetch-Dest", "empty")
         .set("X-Pow-Proof", &proof2)
         .set("User-Agent", "e2e-client")
         .call();
@@ -168,9 +176,9 @@ fn main() {
         Err(e) => fail(format!("fetch-with-proof GET / failed: {e}")),
     };
     if !with_proof_body.contains("upstream-content") {
-        fail("non-navigation request WITH valid proof did NOT reach upstream");
+        fail("fetch/XHR request WITH valid proof did NOT reach upstream");
     }
-    println!("✓ non-navigation with valid proof reached upstream");
+    println!("✓ fetch/XHR with valid proof reached upstream");
 
     // 6d. a top-level navigation (Sec-Fetch-Mode: navigate) passes on the cookie
     //     alone — it cannot carry a custom header.
@@ -188,6 +196,53 @@ fn main() {
         fail("navigation request on cookie alone did NOT reach upstream");
     }
     println!("✓ navigation on cookie alone reached upstream");
+
+    // 6e. tag-driven subresource loads pass on the cookie alone: the browser
+    //     issues them itself, so they can never carry X-Pow-Proof. Covers the
+    //     three Sec-Fetch shapes browsers use — classic tags (no-cors), fonts
+    //     and module scripts (both cors, which is why mode alone must NOT be
+    //     used to demand a proof). Regression test for the bug where every
+    //     asset on a gated page was served the challenge page.
+    for (mode, dest, what) in [
+        ("no-cors", "image", "<img> load"),
+        ("cors", "font", "font load"),
+        ("cors", "script", "module-script load"),
+    ] {
+        let sub = ureq::get(&format!("{base}/"))
+            .set("Cookie", &cookie)
+            .set("Sec-Fetch-Mode", mode)
+            .set("Sec-Fetch-Dest", dest)
+            .set("Sec-Fetch-Site", "same-origin")
+            .set("User-Agent", "e2e-client")
+            .call();
+        let sub_body = match sub {
+            Ok(r) => r.into_string().unwrap_or_default(),
+            Err(ureq::Error::Status(s, _)) => fail(format!("{what} status {s}")),
+            Err(e) => fail(format!("{what} failed: {e}")),
+        };
+        if !sub_body.contains("upstream-content") {
+            fail(format!("{what} (mode={mode}, dest={dest}) on cookie alone did NOT reach upstream"));
+        }
+        println!("✓ {what} on cookie alone reached upstream");
+    }
+
+    // 6f. a location that does NOT set pow_gate_require_proof gets the default
+    //     (off): fetch/XHR passes on the cookie alone, no proof demanded.
+    let default_proof = ureq::get(&format!("{base}/default-proof"))
+        .set("Cookie", &cookie)
+        .set("Sec-Fetch-Mode", "cors")
+        .set("Sec-Fetch-Dest", "empty")
+        .set("User-Agent", "e2e-client")
+        .call();
+    let default_proof_body = match default_proof {
+        Ok(r) => r.into_string().unwrap_or_default(),
+        Err(ureq::Error::Status(s, _)) => fail(format!("default-proof GET status {s}")),
+        Err(e) => fail(format!("default-proof GET failed: {e}")),
+    };
+    if !default_proof_body.contains("upstream-content") {
+        fail("fetch/XHR without proof was challenged on default require_proof — default is not off");
+    }
+    println!("✓ fetch/XHR without proof reached upstream where require_proof is unset (default off)");
 
     // 7. verifier: a UA that maps to verify:test reaches upstream WITHOUT solving,
     //    once the background refresher has loaded the IP-range feed (0.0.0.0/0 ⇒

@@ -95,7 +95,7 @@ pub struct LocationConf {
     pub hmac_key_file: ngx_str_t, // pow_gate_hmac_key_file <file>
     pub clearance_ttl: time_t,    // pow_gate_clearance_ttl <time>
     pub proof_skew: time_t,       // pow_gate_proof_skew <time>
-    pub require_proof: ngx_flag_t, // pow_gate_require_proof on|off (non-navigation)
+    pub require_proof: ngx_flag_t, // pow_gate_require_proof on|off (fetch/XHR)
     pub endpoint: ngx_str_t,      // pow_gate_endpoint <prefix>
 
     // ── clearance-cookie attributes (pow_gate_cookie_*) ──
@@ -202,7 +202,8 @@ pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 18] = [
         post: ptr::null_mut(),
     },
     // pow_gate_require_proof on|off;  (require a valid per-request proof on
-    // non-navigation requests; navigations can't carry a custom header)
+    // fetch/XHR requests — the only kind that can carry a custom header. Off by
+    // default: enabling it needs page-side integration to sign the proofs.)
     ngx_command_t {
         name: ngx_string!("pow_gate_require_proof"),
         type_: HTTP_SERVER_LOCATION | NGX_CONF_FLAG as ngx_uint_t,
@@ -352,7 +353,7 @@ pub extern "C" fn merge_location_conf(
         merge_str(&mut conf.hmac_key_file, &prev.hmac_key_file, b"");
         merge_sec(&mut conf.clearance_ttl, prev.clearance_ttl, 43200 /* 12h */);
         merge_sec(&mut conf.proof_skew, prev.proof_skew, 5);
-        merge_flag(&mut conf.require_proof, prev.require_proof, 1 /* on */);
+        merge_flag(&mut conf.require_proof, prev.require_proof, 0 /* off */);
         merge_str(&mut conf.endpoint, &prev.endpoint, b"/.pow/");
 
         merge_str(&mut conf.cookie_name, &prev.cookie_name, b"pow_clearance");

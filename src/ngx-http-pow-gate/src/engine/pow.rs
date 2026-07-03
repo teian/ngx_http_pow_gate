@@ -38,6 +38,14 @@ pub fn verify_solution(r: &mut Request) -> Status {
     if rc >= NGX_HTTP_SPECIAL_RESPONSE as isize {
         return Status(rc);
     }
+    // ngx_http_read_client_request_body took a reference on the request
+    // (r->main->count++). A CONTENT-phase handler would return NGX_DONE and the
+    // phase engine would finalize (releasing that reference) — but the ACCESS
+    // phase does NOT finalize on NGX_DONE, so release it here ourselves.
+    // Without this the request never completes: the 204 still reaches the
+    // client, but the keep-alive connection stays wedged and the browser's
+    // next request on it (the post-verify reload) hangs forever.
+    unsafe { ngx_http_finalize_request(raw, Status::NGX_DONE.0) };
     Status::NGX_DONE
 }
 

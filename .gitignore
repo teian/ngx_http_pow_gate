@@ -8,3 +8,4 @@
 /.nginx
 /nginx-*/
 *.so
+dist-local/

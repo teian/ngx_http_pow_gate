@@ -139,29 +139,43 @@
   }
 
   // ───────────────────────────────── main ─────────────────────────────────────
+  // Solve+verify attempt. The challenge token is only valid for a short grace
+  // window (server-side, ~2 min): a slow device or a background tab can run
+  // past it, in which case /verify rejects with 4xx and we must fetch a fresh
+  // challenge and try again — NOT dead-end into the error box.
+  async function attempt(kp) {
+    status(tr("requesting", "Requesting challenge…"));
+    var ch = await fetch(ENDPOINT + "challenge", { credentials: "same-origin" })
+      .then(function (r) { return r.json(); });
+
+    status(tr("verifying", "Verifying…"));
+    var difficulty = ch.difficulty || DIFFICULTY;
+    var nonce = await solve(ch.salt, difficulty, percent);
+
+    var res = await fetch(ENDPOINT + "verify", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        salt: ch.salt, exp: ch.exp, token: ch.token,
+        nonce: nonce, pubkey: b64url(kp.pubRaw),
+      }),
+    });
+    return res.ok;
+  }
+
+  var RETRIES = 3;
   async function run() {
     try {
       status(tr("preparing", "Preparing…"));
       var kp = await getKeypair();
 
-      status(tr("requesting", "Requesting challenge…"));
-      var ch = await fetch(ENDPOINT + "challenge", { credentials: "same-origin" })
-        .then(function (r) { return r.json(); });
-
-      status(tr("verifying", "Verifying…"));
-      var difficulty = ch.difficulty || DIFFICULTY;
-      var nonce = await solve(ch.salt, difficulty, percent);
-
-      var res = await fetch(ENDPOINT + "verify", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          salt: ch.salt, exp: ch.exp, token: ch.token,
-          nonce: nonce, pubkey: b64url(kp.pubRaw),
-        }),
-      });
-      if (!res.ok) throw new Error("verify rejected: " + res.status);
+      var ok = false;
+      for (var i = 0; i < RETRIES && !ok; i++) {
+        if (i > 0) percent(0);
+        ok = await attempt(kp);
+      }
+      if (!ok) throw new Error("verify rejected " + RETRIES + " times");
 
       installProofFetch(kp.privateKey);
       status(tr("done", "Done"));
@@ -171,6 +185,18 @@
       console.error("[pow]", e);
       fail();
     }
+  }
+
+  // Yield to the event loop without setTimeout: background tabs clamp timers
+  // to >= 1s, which would stretch the solve past the challenge grace window.
+  // MessageChannel posts are not throttled by tab visibility.
+  var yieldChannel = typeof MessageChannel !== "undefined" ? new MessageChannel() : null;
+  function yieldNow() {
+    if (!yieldChannel) return new Promise(function (r) { setTimeout(r, 0); });
+    return new Promise(function (r) {
+      yieldChannel.port1.onmessage = function () { r(); };
+      yieldChannel.port2.postMessage(null);
+    });
   }
 
   // Chunked search so the UI thread can paint progress between batches.
@@ -184,7 +210,7 @@
         nonce++;
       }
       onProgress(Math.min(99, (nonce / difficulty) * 100));
-      await new Promise(function (r) { setTimeout(r, 0); });
+      await yieldNow();
     }
   }
 

@@ -332,7 +332,7 @@ pub extern "C" fn create_location_conf(cf: *mut ngx_conf_t) -> *mut c_void {
 }
 
 pub extern "C" fn merge_location_conf(
-    _cf: *mut ngx_conf_t,
+    cf: *mut ngx_conf_t,
     parent: *mut c_void,
     child: *mut c_void,
 ) -> *mut c_char {
@@ -383,9 +383,15 @@ pub extern "C" fn merge_location_conf(
                 );
                 return NGX_CONF_ERROR;
             }
-            // Load + cache the page once (falls back to the embedded default when
-            // the path is empty). The solver is always the embedded SOLVER_JS.
-            conf.page_cache = load_page(conf.page_path);
+            // Load + render + cache the page once (falls back to the embedded
+            // default when the path is empty); placeholders are substituted with
+            // this location's effective difficulty/endpoint. An unreadable
+            // pow_gate_page is a config error — same fail-closed stance as the
+            // key check above. The solver is always the embedded SOLVER_JS.
+            match load_page(cf, conf.page_path, conf.difficulty, conf.endpoint) {
+                Some(page) => conf.page_cache = page,
+                None => return NGX_CONF_ERROR,
+            }
         }
         NGX_CONF_OK
     }

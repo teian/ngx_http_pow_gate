@@ -24,10 +24,10 @@
 //!     engine, so it ships with the module.
 
 use ngx::core::Status;
-use ngx::ffi::ngx_str_t;
+use ngx::ffi::{ngx_conf_t, ngx_pnalloc, ngx_str_t, ngx_uint_t};
 use ngx::http::{HTTPStatus, Request};
 
-use crate::response::{as_bytes, send_and_finish};
+use crate::response::{as_bytes, as_str, send_and_finish};
 use crate::runtime::Cfg;
 
 // Assets live at the repo root; this crate is two levels down (crates/<name>/),
@@ -46,14 +46,61 @@ pub const SOLVER_JS: &[u8] =
 /// Load + cache the challenge page bytes for a location.
 ///
 /// If `path` is empty (no `pow_gate_page`) -> use [`DEFAULT_PAGE`]; otherwise read
-/// the file, substitute `{{difficulty}}` / `{{endpoint}}` placeholders, and cache
-/// the result so it is not re-read per request.
-pub fn load_page(path: ngx_str_t) -> ngx_str_t {
-    let _ = path;
-    ngx_str_t {
-        len: DEFAULT_PAGE.len(),
-        data: DEFAULT_PAGE.as_ptr() as *mut u8,
+/// the file. Either way, substitute the `{{difficulty}}` / `{{endpoint}}`
+/// placeholders and copy the rendered bytes into the config pool, so they live
+/// for the whole cycle and are not re-read or re-rendered per request.
+///
+/// Returns `None` when the file cannot be read or the pool allocation fails —
+/// the caller turns that into a config error (fail closed at startup, like the
+/// HMAC key check), because silently serving the default page would hide a
+/// broken `pow_gate_page` from the operator.
+pub fn load_page(
+    cf: *mut ngx_conf_t,
+    path: ngx_str_t,
+    difficulty: ngx_uint_t,
+    endpoint: ngx_str_t,
+) -> Option<ngx_str_t> {
+    let raw: Vec<u8> = if path.len == 0 {
+        DEFAULT_PAGE.to_vec()
+    } else {
+        let p = unsafe { as_str(&path) };
+        match std::fs::read(p) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("[pow_gate] pow_gate_page: cannot read {p:?}: {e}");
+                return None;
+            }
+        }
+    };
+
+    let rendered = replace_all(&raw, b"{{difficulty}}", difficulty.to_string().as_bytes());
+    let rendered = replace_all(&rendered, b"{{endpoint}}", unsafe { as_bytes(&endpoint) });
+
+    unsafe {
+        let data = ngx_pnalloc((*cf).pool, rendered.len()) as *mut u8;
+        if data.is_null() {
+            return None;
+        }
+        std::ptr::copy_nonoverlapping(rendered.as_ptr(), data, rendered.len());
+        Some(ngx_str_t { len: rendered.len(), data })
     }
+}
+
+/// Replace every occurrence of `needle` in `haystack` (no overlap handling
+/// needed — the placeholders cannot overlap themselves).
+fn replace_all(haystack: &[u8], needle: &[u8], with: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(haystack.len() + 64);
+    let mut i = 0;
+    while i < haystack.len() {
+        if haystack[i..].starts_with(needle) {
+            out.extend_from_slice(with);
+            i += needle.len();
+        } else {
+            out.push(haystack[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Serve the challenge page: `200 OK`, `Content-Type: text/html`, body = `page`.

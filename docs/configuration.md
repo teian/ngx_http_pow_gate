@@ -150,7 +150,8 @@ Path to a custom challenge/progress page. Loaded and cached once at config time;
 `{{difficulty}}` and `{{endpoint}}` placeholders are substituted before caching.
 If omitted, the page compiled into the module
 ([`assets/challenge.html`](../assets/challenge.html)) is used, so the module works
-with zero extra files.
+with zero extra files. An unreadable file is a config-load error — nginx refuses
+to start/reload instead of silently falling back to the embedded page.
 
 Your page only needs these hook IDs for the solver to drive it: `#pow-status`,
 `#pow-progress`, `#pow-percent`, `#pow-error`. Everything else is yours. Full

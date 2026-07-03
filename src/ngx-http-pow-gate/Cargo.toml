@@ -1,6 +1,6 @@
 [package]
 name = "ngx-http-pow-gate"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.85"
 description = "nginx dynamic module: proof-of-work gate for bot/scraper mitigation"

@@ -32,7 +32,6 @@ use std::time::{Duration, Instant};
 
 /// One configured verifier.
 pub struct Verifier {
-    pub name: String,
     pub ranges: ArcSwap<IpRangeSet>,
     pub urls: Vec<String>,
     pub refresh: Duration,
@@ -308,7 +307,6 @@ extern "C" fn verifier_inner(
 
 fn register(b: Builder) {
     let v = Arc::new(Verifier {
-        name: b.name.clone(),
         ranges: ArcSwap::from_pointee(IpRangeSet::new()),
         urls: b.urls,
         refresh: b.refresh,

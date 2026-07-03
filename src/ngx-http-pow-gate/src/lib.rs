@@ -77,7 +77,7 @@ pub static mut ngx_http_pow_gate_module: ngx_module_t = ngx_module_t {
     signature: ngx::ffi::NGX_RS_MODULE_SIGNATURE.as_ptr() as *const _,
 
     ctx: &NGX_HTTP_POW_GATE_MODULE_CTX as *const _ as *mut _,
-    commands: unsafe { NGX_HTTP_POW_GATE_COMMANDS.as_ptr() as *mut ngx_command_t },
+    commands: (&raw mut NGX_HTTP_POW_GATE_COMMANDS).cast::<ngx_command_t>(),
     type_: NGX_HTTP_MODULE as ngx_uint_t,
 
     init_master: None,

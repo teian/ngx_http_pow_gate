@@ -11,7 +11,7 @@ PORT="${PORT:-8080}"
 NAME="pow-gate-perf-nginx"
 
 echo "==> build module + nginx image"
-docker build -f docker/Dockerfile --target nginx-smoke -t pow-gate-nginx . >/dev/null
+docker build -f docker/Dockerfile --target nginx-smoke-debian -t pow-gate-nginx . >/dev/null
 
 echo "==> start nginx on :${PORT}"
 docker rm -f "$NAME" >/dev/null 2>&1 || true

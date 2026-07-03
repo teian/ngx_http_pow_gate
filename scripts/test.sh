@@ -20,10 +20,10 @@ docker_pipeline() {
   docker build -f docker/Dockerfile --target core-test .
 
   echo "==> build module against nginx"
-  docker build -f docker/Dockerfile --target module-build -t pow-gate-module .
+  docker build -f docker/Dockerfile --target module-build-debian -t pow-gate-module .
 
   echo "==> nginx -t smoke (module loads + directives parse)"
-  docker build -f docker/Dockerfile --target nginx-smoke -t pow-gate-nginx .
+  docker build -f docker/Dockerfile --target nginx-smoke-debian -t pow-gate-nginx .
 
   echo "==> live end-to-end handshake"
   docker compose -f docker-compose.test.yml up --build \

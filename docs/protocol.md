@@ -148,7 +148,9 @@ overridable with the `pow_gate_cookie_*` directives.
 ## The per-request proof
 
 The cookie proves *work was done*; the proof proves *this is the same client now*.
-On every gated request after clearance, the client sends:
+On every gated `fetch()` after clearance (the only request kind that can carry a
+custom header — see `pow_gate_require_proof` in
+[configuration.md](configuration.md)), the client sends:
 
 ```
 X-Pow-Proof: base64url( sign_privkey( H( method | path | timestamp ) ) ) . <timestamp>

@@ -28,7 +28,7 @@ gate.
 | `pow_gate_hmac_key_file`   | http, server, location    | `<file>`     | —           | `LocationConf.hmac_key_file`    |
 | `pow_gate_clearance_ttl`   | http, server, location    | `<time>`     | `12h`       | `LocationConf.clearance_ttl`    |
 | `pow_gate_proof_skew`      | http, server, location    | `<time>`     | `5s`        | `LocationConf.proof_skew`       |
-| `pow_gate_require_proof`   | http, server, location    | `on`\|`off`  | `on`        | `LocationConf.require_proof`    |
+| `pow_gate_require_proof`   | http, server, location    | `on`\|`off`  | `off`       | `LocationConf.require_proof`    |
 | `pow_gate_endpoint`        | http, server, location    | `<prefix>`   | `/.pow/`    | `LocationConf.endpoint`         |
 | `pow_gate_cookie_name`     | http, server, location    | `<name>`     | `pow_clearance` | `LocationConf.cookie_name`  |
 | `pow_gate_cookie_domain`   | http, server, location    | `<domain>`   | host-only   | `LocationConf.cookie_domain`    |
@@ -214,15 +214,15 @@ default is a generous **12h** (covers a working day). Bump it higher (`24h`,
 `72h`) for a friendlier site; lower it only if you have a specific reason.
 
 Length trades UX against the replay window of a leaked clearance cookie. With
-`pow_gate_require_proof on` (default), non-navigation requests (fetch/XHR) still
-need a fresh `pow_gate_proof_skew`-bounded proof signed by the client's private
-key (see [docs/architecture.md](architecture.md#the-two-token-security-model)),
-so a stolen cookie cannot be replayed over those. **Top-level navigations are
-gated by the cookie alone** — they cannot carry the proof header — so a longer TTL
-does widen the window in which a leaked cookie could be replayed as a navigation.
-A long clearance spares the user from redoing the *work*, not the *proof*. Keep
-the default unless you have a reason; lower it if cookie leakage is a concern in
-your environment.
+`pow_gate_require_proof on`, fetch/XHR requests still need a fresh
+`pow_gate_proof_skew`-bounded proof signed by the client's private key (see
+[docs/architecture.md](architecture.md#the-two-token-security-model)), so a
+stolen cookie cannot be replayed over those. **Everything else is gated by the
+cookie alone** — navigations and tag subresources cannot carry the proof header
+— so a longer TTL does widen the window in which a leaked cookie could be
+replayed. A long clearance spares the user from redoing the *work*, not the
+*proof*. Keep the default unless you have a reason; lower it if cookie leakage
+is a concern in your environment.
 
 nginx time syntax: `30m`, `12h`, `72h`, `90s`.
 
@@ -237,24 +237,32 @@ you see legitimate failures from clients with bad clocks.
 
 ### `pow_gate_require_proof on | off;`
 
-> Context: `http`, `server`, `location` · Default: `on`
+> Context: `http`, `server`, `location` · Default: `off`
 
 Controls whether a valid per-request proof (`X-Pow-Proof`) is **required** on
-non-navigation requests that present a clearance cookie.
+fetch/XHR requests that present a clearance cookie.
 
-- `on` (default) — a request the browser marks as a sub-resource fetch/XHR
-  (`Sec-Fetch-Mode` present and not `navigate`) must carry a valid proof signed by
-  the clearance-bound key; the cookie alone is **not** enough. This is what stops
-  a leaked clearance cookie from being replayed by `fetch`/XHR/CLI tooling.
-- `off` — the cookie alone is accepted on every request (the proof is still
-  verified when present, but never demanded). Use only if a legitimate client
-  cannot run the solver's `fetch` wrapper yet must reuse a clearance.
+- `off` (default) — the cookie alone is accepted on every request (the proof
+  is still verified when present, but never demanded). This is the default
+  because demanding the proof only works when the gated site's own pages can
+  sign one, which needs page-side integration: something must load the
+  clearance key and attach `X-Pow-Proof` to every `fetch`/XHR call the pages
+  make. Without that, `on` challenges all of the site's AJAX.
+- `on` — a request the browser marks as scripted fetch/XHR
+  (`Sec-Fetch-Dest: empty`) must carry a valid proof signed by the
+  clearance-bound key; the cookie alone is **not** enough. This is what stops
+  a leaked clearance cookie from being replayed by `fetch`/XHR tooling that
+  mimics browser fetch metadata. Enable it only once your pages attach proofs
+  to their own `fetch`/XHR traffic.
 
-Top-level navigations (`Sec-Fetch-Mode: navigate`) and clients that send **no**
-`Sec-Fetch-*` metadata at all (older browsers, non-browser agents) are always
-allowed on the cookie alone — they cannot attach a custom header on a navigation,
-so requiring one would lock them out. The hardening therefore targets exactly the
-fetch/XHR replay vector without breaking navigation.
+Only fetch/XHR calls can attach a custom header, and browsers mark exactly
+those with `Sec-Fetch-Dest: empty` — so everything else is always allowed on
+the cookie alone: top-level navigations, tag-driven subresource loads
+(`<script>`, `<img>`, `<link rel=stylesheet>`, fonts, media), and clients that
+send **no** `Sec-Fetch-*` metadata at all (older browsers, non-browser
+agents). Requiring a proof of those would challenge every static asset on a
+gated page. Note that `Sec-Fetch-Mode` is deliberately not the signal: fonts,
+module scripts and preloads use `mode: cors` yet still cannot carry headers.
 
 ### `pow_gate_endpoint <prefix>;`
 
@@ -513,6 +521,11 @@ with `limit_req` rather than cranking difficulty to extremes.
   the worker user owns it. Missing/short key now makes `nginx -t` fail outright.
 - **`pow_gate_proof_skew` too low** → clients with skewed clocks fail forever.
   `5s`–`30s` is reasonable.
+- **`pow_gate_require_proof on` without page integration** → every `fetch`/XHR
+  call the site's pages make is challenged (they present the cookie but nothing
+  signs `X-Pow-Proof` for them), so all AJAX returns the challenge page as
+  `200 text/html`. Symptom walkthrough and the one-command check:
+  [troubleshooting.md](troubleshooting.md).
 - **Expecting non-JS clients to pass a challenge** → they can't. `allow` or
   exclude feeds, monitors, and other scripted-but-legitimate consumers.
 - **Different `pow_gate_hmac_key_file` / `pow_gate_endpoint` on the issuing vs.

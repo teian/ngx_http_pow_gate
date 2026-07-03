@@ -146,7 +146,12 @@ Two tokens, two jobs:
   being re-challenged.
 - **Per-request proof** (`pow_gate_proof_skew`, e.g. 5s) — a DPoP-style signature
   proving it's *the same client, this request, right now*. Defeats cookie theft
-  and replay. A stolen cookie is useless without the private key.
+  and replay. A stolen cookie is useless without the private key. Demanded only
+  from requests that can carry a custom header — `fetch`/XHR, marked
+  `Sec-Fetch-Dest: empty` — and only with `pow_gate_require_proof on` (default
+  `off`: it needs your pages to sign proofs on their own `fetch`/XHR calls);
+  navigations and tag subresources (scripts, images, styles, fonts) always pass
+  on the cookie alone.
 
 See [docs/protocol.md](docs/protocol.md) for token formats and endpoint contracts,
 and [docs/architecture.md](docs/architecture.md) for the threat model.
@@ -207,6 +212,7 @@ Every directive at a glance. Full reference (contexts, defaults, edge cases) in
 | `pow_gate_hmac_key_file`   | http, server, location    | `<file>`       | Server secret for clearance/proof signing          |
 | `pow_gate_clearance_ttl`   | http, server, location    | `<time>`       | How long a clearance lasts (default `12h`)         |
 | `pow_gate_proof_skew`      | http, server, location    | `<time>`       | Per-request proof validity window (e.g. `5s`)      |
+| `pow_gate_require_proof`   | http, server, location    | `on`\|`off`    | Demand `X-Pow-Proof` on fetch/XHR (default `off`)  |
 | `pow_gate_endpoint`        | http, server, location    | `<prefix>`     | Internal route prefix (default `/.pow/`)           |
 | `pow_gate_cookie_name`     | http, server, location    | `<name>`       | Clearance cookie name (default `pow_clearance`)    |
 | `pow_gate_cookie_domain`   | http, server, location    | `<domain>`     | Cookie `Domain=` (default host-only)               |
@@ -219,7 +225,9 @@ Every directive at a glance. Full reference (contexts, defaults, edge cases) in
 Every directive except the `pow_gate_verifier` block **inherits** `http → server
 → location` and can be overridden at any level — set the tunables once high up,
 flip exceptions low down. The verifier block is `http`-only because it registers
-a global named allowlist used by `verify:<name>` from anywhere.
+a global named allowlist used by `verify:<name>` from anywhere. Inside the block:
+`ip_ranges_url`, `ip_ranges_refresh`, `fcrdns_suffix`, `fcrdns_ttl` — see
+[docs/configuration.md](docs/configuration.md#the-pow_gate_verifier-block).
 
 The decision values understood by `pow_gate_decision`:
 
@@ -263,7 +271,7 @@ ngx_pow/
 ├── docker-compose.test.yml       live e2e   ·  docker-compose.perf.yml  load test
 ├── examples/nginx.conf           full commented configuration example
 ├── scripts/                      test.sh (pipeline) · perf.sh (load test)
-└── docs/  architecture · configuration · build · protocol · challenge-page · testing · performance
+└── docs/  architecture · configuration · build · protocol · challenge-page · testing · troubleshooting · performance
 ```
 
 The cryptography lives in **`src/pow-gate-core`** (no nginx dependency, so it
@@ -380,6 +388,9 @@ rather than wrongly allowing — so it is safe to ship the gate without it.
   the built-in light/dark theme + i18n (26 languages, auto-detected).
 - **[docs/testing.md](docs/testing.md)** — the self-verifying Docker pipeline
   (engine tests → build → `nginx -t` → live e2e handshake).
+- **[docs/troubleshooting.md](docs/troubleshooting.md)** — field symptoms and
+  diagnosis: broken assets on gated pages, misleading browser error strings,
+  the one-command challenge-page check.
 - **[docs/performance.md](docs/performance.md)** — per-request cost,
   microbenchmarks, the HTTP load suite, and the ECDSA-proof bottleneck.
 - **[docs/releasing.md](docs/releasing.md)** — versioning (module vs. nginx

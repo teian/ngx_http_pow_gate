@@ -185,10 +185,13 @@ flowchart TB
   `pow_gate_hmac_key_file`, so clients can't forge it. Carries the *thumbprint*
   of the client's public key. Lives `pow_gate_clearance_ttl` (default 12h).
 - **Per-request proof** — the client signs `(method, path, timestamp)` with the
-  matching **private** key on every gated request. The server checks the
-  signature against the cookie's thumbprint and that the timestamp is within
+  matching **private** key on every gated `fetch`/XHR request. The server checks
+  the signature against the cookie's thumbprint and that the timestamp is within
   `pow_gate_proof_skew` (e.g. 5s). A captured cookie+proof can't be replayed
   seconds later, and the cookie alone is worthless without the private key.
+  Only *demanded* with `pow_gate_require_proof on` (default `off` — it needs
+  the site's own pages to sign their `fetch`/XHR calls; navigations and tag
+  subresources can never carry the header and always pass on the cookie alone).
 
 This is the same idea as [DPoP (RFC 9449)](https://www.rfc-editor.org/rfc/rfc9449):
 bind a bearer token to a key the holder must prove possession of.
@@ -238,7 +241,7 @@ Implementation: [`src/verifier.rs`](../src/ngx-http-pow-gate/src/verifier.rs).
 | ---------------------------------------- | ----------------------------------------------------------------- |
 | Mass scraping by cost-sensitive bots     | PoW makes each un-cleared request cost CPU (`pow_gate_difficulty`) |
 | Spoofed good-bot User-Agent              | `verify:<name>` checks IP ranges + FCrDNS, not the UA string       |
-| Clearance cookie theft / sharing         | Per-request proof bound to a private key the thief doesn't have    |
+| Clearance cookie theft / sharing         | Per-request proof bound to a private key the thief doesn't have (`pow_gate_require_proof on`, needs page integration) |
 | Cookie/proof replay                      | Proof timestamp must be within `pow_gate_proof_skew`               |
 | Forged clearance cookie                  | HMAC-SHA256 with server-only `pow_gate_hmac_key_file`              |
 | Precomputed / farmed-out PoW solutions   | `salt` is per-request, HMAC-bound, and `expires_at`-limited        |

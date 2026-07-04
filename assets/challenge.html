@@ -364,6 +364,14 @@
     })();
   </script>
 
+  <!-- Solve-result recording is opt-in (off by default — no consumer in
+       normal deployments). Enable it only on local test hosts so the dev
+       sandbox result page (docker/www/index.html) can show the stats. -->
+  <script>
+    if (/^(localhost|127\.[0-9.]+|\[::1\])$|\.localhost$/.test(location.hostname))
+      window.__POW_RECORD_RESULT__ = true;
+  </script>
+
   <!-- The module serves the solver (keypair gen, PoW loop in a Web Worker,
        per-request proof signing). It reads difficulty/endpoint from data-attrs
        and updates the hook IDs above, then reloads on success. -->

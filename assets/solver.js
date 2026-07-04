@@ -11,8 +11,10 @@
  *   2. GET  {endpoint}challenge        → { salt, exp, difficulty, token }
  *   3. find nonce: SHA-256(utf8(salt + nonce)) < target,  target = 2^256/difficulty
  *   4. POST {endpoint}verify { salt, exp, token, nonce, pubkey } → Set-Cookie
- *   5. record the solve result in sessionStorage("pow-result") — informational,
- *      lets the landing page display nonce/hash/solve time (dev sandbox does)
+ *   5. optionally record the solve result in sessionStorage("pow-result") —
+ *      OPT-IN via data-record-result / window.__POW_RECORD_RESULT__, off by
+ *      default; lets a landing page display nonce/hash/solve time (the dev
+ *      sandbox result page does)
  *   6. location.reload() into the now-cleared origin
  *
  * After clearance it installs a fetch() wrapper that attaches the per-request
@@ -29,6 +31,15 @@
   var el = document.currentScript;
   var ENDPOINT = (el && el.dataset.endpoint) || "/.pow/";
   var DIFFICULTY = parseInt((el && el.dataset.difficulty) || "50000", 10);
+  // Solve-result recording (sessionStorage "pow-result") is OPT-IN — off by
+  // default because normal deployments have no consumer for it. Enable via
+  // `data-record-result` on this script tag, or `window.__POW_RECORD_RESULT__
+  // = true` set by the page before the solver loads (the embedded challenge
+  // page does the latter for localhost test hosts only).
+  var RECORD_RESULT = !!(
+    (el && el.dataset.recordResult != null && el.dataset.recordResult !== "off") ||
+    window.__POW_RECORD_RESULT__ === true
+  );
 
   var I18N = (typeof window !== "undefined" && window.__POW_I18N__) || {};
   var tr = function (k, fallback) { return I18N[k] || fallback; };
@@ -165,7 +176,7 @@
         nonce: nonce, pubkey: b64url(kp.pubRaw),
       }),
     });
-    if (res.ok) recordResult(ch.salt, difficulty, nonce, solveMs);
+    if (res.ok && RECORD_RESULT) recordResult(ch.salt, difficulty, nonce, solveMs);
     return res.ok;
   }
 
@@ -173,7 +184,8 @@
   // on (e.g. the dev-sandbox backend renders nonce, winning hash and solve
   // time from it — see docker/www/index.html). Same-origin sessionStorage,
   // gone with the tab. Purely informational: a storage failure (private mode,
-  // quota) must never break the clearance flow.
+  // quota) must never break the clearance flow. Only runs when RECORD_RESULT
+  // opted in (see above).
   function recordResult(salt, difficulty, nonce, solveMs) {
     try {
       sessionStorage.setItem("pow-result", JSON.stringify({

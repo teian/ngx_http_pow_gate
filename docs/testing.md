@@ -148,7 +148,11 @@ cookie. That page ([docker/www/index.html](../docker/www/index.html)) renders
 the **computation result** of the solve — winning nonce, hashes tried, solve
 time, hash rate, salt and the recomputed winning hash (leading zeros
 highlighted) — from the `pow-result` record the solver leaves in
-`sessionStorage`. Useful curl checks (also printed by `dev.sh up`):
+`sessionStorage`. Recording is **opt-in** (off by default): the embedded
+challenge page enables it automatically for localhost-style test hosts only;
+custom pages opt in with `data-record-result` on the solver `<script>` tag or
+`window.__POW_RECORD_RESULT__ = true`. Useful curl checks (also printed by
+`dev.sh up`):
 
 | Request | Expected |
 | --- | --- |

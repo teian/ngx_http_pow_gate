@@ -11,7 +11,9 @@
  *   2. GET  {endpoint}challenge        → { salt, exp, difficulty, token }
  *   3. find nonce: SHA-256(utf8(salt + nonce)) < target,  target = 2^256/difficulty
  *   4. POST {endpoint}verify { salt, exp, token, nonce, pubkey } → Set-Cookie
- *   5. location.reload() into the now-cleared origin
+ *   5. record the solve result in sessionStorage("pow-result") — informational,
+ *      lets the landing page display nonce/hash/solve time (dev sandbox does)
+ *   6. location.reload() into the now-cleared origin
  *
  * After clearance it installs a fetch() wrapper that attaches the per-request
  * proof header (X-Pow-Proof) to same-origin requests. (Top-level navigations
@@ -150,7 +152,9 @@
 
     status(tr("verifying", "Verifying…"));
     var difficulty = ch.difficulty || DIFFICULTY;
+    var t0 = performance.now();
     var nonce = await solve(ch.salt, difficulty, percent);
+    var solveMs = Math.round(performance.now() - t0);
 
     var res = await fetch(ENDPOINT + "verify", {
       method: "POST",
@@ -161,7 +165,22 @@
         nonce: nonce, pubkey: b64url(kp.pubRaw),
       }),
     });
+    if (res.ok) recordResult(ch.salt, difficulty, nonce, solveMs);
     return res.ok;
+  }
+
+  // Leave the solve result behind for the page the post-clearance reload lands
+  // on (e.g. the dev-sandbox backend renders nonce, winning hash and solve
+  // time from it — see docker/www/index.html). Same-origin sessionStorage,
+  // gone with the tab. Purely informational: a storage failure (private mode,
+  // quota) must never break the clearance flow.
+  function recordResult(salt, difficulty, nonce, solveMs) {
+    try {
+      sessionStorage.setItem("pow-result", JSON.stringify({
+        salt: salt, difficulty: difficulty, nonce: nonce,
+        solveMs: solveMs, finishedAt: new Date().toISOString(),
+      }));
+    } catch (e) { /* informational only */ }
   }
 
   var RETRIES = 3;

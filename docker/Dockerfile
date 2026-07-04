@@ -132,9 +132,11 @@ COPY --from=module-build-debian /ngx_http_pow_gate_module.so /etc/nginx/modules/
 COPY docker/nginx.test.conf /etc/nginx/nginx.conf
 RUN install -d -m 755 /etc/pow && head -c 32 /dev/urandom > /etc/pow/hmac.key && chmod 644 /etc/pow/hmac.key
 RUN install -d /var/www \
- && printf 'upstream-content\n' > /var/www/index.html \
  && printf 'ok\n' > /var/www/healthz.txt \
  && printf '{"prefixes":[{"ipv4Prefix":"0.0.0.0/0"},{"ipv6Prefix":"::/0"}]}\n' > /var/www/ranges.json
+# Fake upstream page; carries the "upstream-content" marker the e2e client
+# greps for and renders the solver's sessionStorage("pow-result") stats.
+COPY docker/www/index.html /var/www/index.html
 # Fails the build if the module is ABI-incompatible or any directive won't parse.
 RUN nginx -t
 
@@ -143,9 +145,9 @@ COPY --from=module-build-alpine /ngx_http_pow_gate_module.so /etc/nginx/modules/
 COPY docker/nginx.test.conf /etc/nginx/nginx.conf
 RUN install -d -m 755 /etc/pow && head -c 32 /dev/urandom > /etc/pow/hmac.key && chmod 644 /etc/pow/hmac.key
 RUN install -d /var/www \
- && printf 'upstream-content\n' > /var/www/index.html \
  && printf 'ok\n' > /var/www/healthz.txt \
  && printf '{"prefixes":[{"ipv4Prefix":"0.0.0.0/0"},{"ipv6Prefix":"::/0"}]}\n' > /var/www/ranges.json
+COPY docker/www/index.html /var/www/index.html
 RUN nginx -t
 
 # ───────────────────────────── 4. e2e test client ────────────────────────────

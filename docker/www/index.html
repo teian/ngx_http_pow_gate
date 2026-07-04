@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<title>upstream-content · pow_gate test backend</title>
+<!-- Stands in for the protected upstream in the smoke/dev images. The literal
+     string "upstream-content" is the marker the e2e client and the dev-sandbox
+     checks grep for — keep it in the <h1> below. After a browser solve, the
+     script at the bottom renders the computation result the solver left in
+     sessionStorage("pow-result"). -->
+<style>
+  :root{
+    --bg:#f4f5f7; --card:#ffffff; --border:#dfe2e8;
+    --fg-1:#20242e; --fg-2:#4b5261; --fg-3:#7a8194;
+    --accent:#4a6fa5; --ok:#2f8f5b; --ok-bg:#e9f6ef; --ok-bd:#bfe3cf;
+    --slot-bg:#eef1f6; --slot-bd:#d5dae4; --slot-fg:#3d5578;
+    --mono:ui-monospace,'Cascadia Code','JetBrains Mono',Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){ :root{
+    --bg:#191c23; --card:#232733; --border:#343a49;
+    --fg-1:#e8ebf2; --fg-2:#c0c6d4; --fg-3:#8b92a5;
+    --accent:#8fb0dd; --ok:#63c894; --ok-bg:#223b30; --ok-bd:#35604b;
+    --slot-bg:#1d212b; --slot-bd:#3a4155; --slot-fg:#a9c0e2;
+  } }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{
+    font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+    background:var(--bg);color:var(--fg-1);line-height:1.5;
+    display:flex;justify-content:center;padding:48px 20px;
+  }
+  main{width:640px;max-width:100%;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:28px 32px;margin-bottom:16px;}
+  h1{font-size:20px;font-weight:650;display:flex;align-items:center;gap:10px;margin-bottom:6px;}
+  .check{width:26px;height:26px;flex-shrink:0;border-radius:50%;
+    background:var(--ok-bg);border:1.5px solid var(--ok-bd);color:var(--ok);
+    display:inline-flex;align-items:center;justify-content:center;}
+  .check svg{width:15px;height:15px;}
+  .sub{font-size:14px;color:var(--fg-2);}
+  h2{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--fg-3);margin-bottom:10px;}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;}
+  td{padding:6px 0;vertical-align:top;border-top:1px solid var(--border);}
+  tr:first-child td{border-top:none;}
+  td:first-child{width:36%;color:var(--fg-3);padding-right:12px;white-space:nowrap;}
+  code{font-family:var(--mono);font-size:12px;color:var(--slot-fg);
+    background:var(--slot-bg);border:1px solid var(--slot-bd);border-radius:5px;
+    padding:1.5px 5px;word-break:break-all;line-height:1.8;}
+  code.hash b{color:var(--ok);font-weight:700;}
+  .muted{font-size:13px;color:var(--fg-3);}
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>
+      <span class="check" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+      </span>
+      upstream-content
+    </h1>
+    <p class="sub">The proof-of-work gate accepted your clearance — this is the protected backend.</p>
+  </div>
+
+  <div class="card">
+    <h2>Computation result (browser solve)</h2>
+    <p class="muted" id="pow-nostats">
+      No solve stats found — they are only in this tab's sessionStorage right
+      after a browser solve (not for curl/node clients or an already-cleared
+      session).
+    </p>
+    <table id="pow-stats" style="display:none">
+      <tr><td>Difficulty (expected hashes)</td><td id="st-difficulty">—</td></tr>
+      <tr><td>Winning nonce</td><td id="st-nonce">—</td></tr>
+      <tr><td>Hashes tried</td><td id="st-hashes">—</td></tr>
+      <tr><td>Solve time</td><td id="st-elapsed">—</td></tr>
+      <tr><td>Hash rate</td><td id="st-rate">—</td></tr>
+      <tr><td>Salt</td><td><code id="st-salt">—</code></td></tr>
+      <tr><td>Winning hash <span class="muted">SHA-256(salt+nonce)</span></td>
+          <td><code class="hash" id="st-hash">—</code></td></tr>
+    </table>
+  </div>
+</main>
+
+<script>
+  (function(){
+    var raw = null;
+    try{ raw = sessionStorage.getItem('pow-result'); }catch(e){}
+    if(!raw) return;
+    var r; try{ r = JSON.parse(raw); }catch(e){ return; }
+    if(typeof r.nonce !== 'number') return;
+
+    var $ = function(id){ return document.getElementById(id); };
+    var fmt = new Intl.NumberFormat();
+    $('pow-nostats').style.display = 'none';
+    $('pow-stats').style.display = '';
+
+    $('st-difficulty').textContent = r.difficulty ? fmt.format(r.difficulty) : '—';
+    $('st-nonce').textContent = fmt.format(r.nonce);
+    $('st-hashes').textContent = fmt.format(r.nonce + 1);
+    if (typeof r.solveMs === 'number') {
+      $('st-elapsed').textContent = (r.solveMs / 1000).toFixed(2) + ' s';
+      if (r.solveMs > 0) {
+        $('st-rate').textContent = fmt.format(Math.round((r.nonce + 1) / (r.solveMs / 1000))) + ' H/s';
+      }
+    }
+    if (r.salt) {
+      $('st-salt').textContent = r.salt;
+      /* Recompute the winning hash exactly like the solver: SHA-256(salt+nonce)
+         must be below 2^256/difficulty — leading zero nibbles highlighted. */
+      var enc = new TextEncoder();
+      crypto.subtle.digest('SHA-256', enc.encode(r.salt + r.nonce)).then(function(buf){
+        var bytes = new Uint8Array(buf), hex = '';
+        for (var i = 0; i < bytes.length; i++) hex += bytes[i].toString(16).padStart(2, '0');
+        var zeros = hex.match(/^0*/)[0];
+        var el = $('st-hash');
+        el.textContent = '';
+        var b = document.createElement('b');
+        b.textContent = zeros;
+        el.appendChild(b);
+        el.appendChild(document.createTextNode(hex.slice(zeros.length)));
+      });
+    }
+  })();
+</script>
+</body>
+</html>

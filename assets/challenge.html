@@ -364,13 +364,11 @@
     })();
   </script>
 
-  <!-- Solve-result recording is opt-in (off by default — no consumer in
-       normal deployments). Enable it only on local test hosts so the dev
-       sandbox result page (docker/www/index.html) can show the stats. -->
-  <script>
-    if (/^(localhost|127\.[0-9.]+|\[::1\])$|\.localhost$/.test(location.hostname))
-      window.__POW_RECORD_RESULT__ = true;
-  </script>
+  <!-- Solve-result recording (sessionStorage "pow-result") is opt-in and
+       deliberately NOT enabled here. Test setups serve a copy of this page
+       with data-record-result added to the solver tag below (the dev
+       sandbox generates docker/challenge.dev.html via scripts/dev.sh);
+       custom pages can set it directly. Production never records. -->
 
   <!-- The module serves the solver (keypair gen, PoW loop in a Web Worker,
        per-request proof signing). It reads difficulty/endpoint from data-attrs

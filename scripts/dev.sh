@@ -16,8 +16,18 @@ cd "$(dirname "$0")/.."
 compose() { docker compose -f docker-compose.dev.yml "$@"; }
 port="${DEV_PORT:-12222}"
 
+gen_page() {
+  # Test challenge page (gitignored): embedded page + data-record-result on
+  # the solver tag → enables the solver's opt-in solve-result recording so
+  # the result page can show the computation stats. Truncating redirect
+  # keeps the inode stable for the single-file bind mount.
+  sed 's|<script src="{{endpoint}}solver.js"|<script data-record-result src="{{endpoint}}solver.js"|' \
+      assets/challenge.html > docker/challenge.dev.html
+}
+
 case "${1:-up}" in
   up)
+    gen_page
     compose up --build -d
     cat <<EOF
 
@@ -61,6 +71,7 @@ EOF
     fi
     ;;
   reload)
+    gen_page
     compose exec nginx nginx -t
     compose exec nginx nginx -s reload
     echo "reloaded"

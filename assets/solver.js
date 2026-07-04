@@ -33,9 +33,9 @@
   var DIFFICULTY = parseInt((el && el.dataset.difficulty) || "50000", 10);
   // Solve-result recording (sessionStorage "pow-result") is OPT-IN — off by
   // default because normal deployments have no consumer for it. Enable via
-  // `data-record-result` on this script tag, or `window.__POW_RECORD_RESULT__
-  // = true` set by the page before the solver loads (the embedded challenge
-  // page does the latter for localhost test hosts only).
+  // `data-record-result` on this script tag (test setups serve a page copy
+  // with it — the dev sandbox generates docker/challenge.dev.html) or, for
+  // pages that decide at runtime, `window.__POW_RECORD_RESULT__ = true`.
   var RECORD_RESULT = !!(
     (el && el.dataset.recordResult != null && el.dataset.recordResult !== "off") ||
     window.__POW_RECORD_RESULT__ === true

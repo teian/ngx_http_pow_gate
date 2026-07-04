@@ -2,14 +2,20 @@
 //! allow / deny / challenge decision.
 //!
 //! Decision order (first match wins):
-//!   0. internal `{endpoint}*` route → handled here (bypasses the gate)
+//!   0. internal `{endpoint}*` route → handled here (bypasses the gate; the
+//!      decision is still evaluated first so `/challenge` issues the
+//!      difficulty the decision demands)
 //!   1. gate disabled            → DECLINED (pass straight to upstream)
 //!   2. trusted network (`geo`)  → DECLINED
 //!   3. decision == allow        → DECLINED
 //!   4. decision == deny         → 403
 //!   5. decision == verify:<n>   → run verifier; pass if it confirms the bot
 //!   6. valid clearance cookie   → DECLINED
-//!   7. otherwise                → serve the challenge page (200)
+//!   7. otherwise                → serve the challenge page (200): the JS
+//!      PoW page, or the no-JS meta-refresh page on `challenge:nojs`
+//!
+//! Decision strings (`challenge[:N|:js|:nojs[:secs]]`, `allow`, `deny`,
+//! `verify:<name>`) are parsed by [`pow_gate_core::decision`].
 
 use ngx::core::Status;
 use ngx::ffi::{
@@ -18,7 +24,10 @@ use ngx::ffi::{
 };
 use ngx::http::{HttpModule, HttpModuleConfExt, NgxHttpCoreModule, Request};
 
-use crate::challenge::{route_internal, serve_challenge_page};
+use pow_gate_core::nojs;
+use pow_gate_core::Decision;
+
+use crate::challenge::{route_internal, serve_challenge_page, serve_nojs_page};
 use crate::config::LocationConf;
 use crate::engine::clearance::has_valid_clearance;
 use crate::response::as_str;
@@ -38,11 +47,29 @@ ngx::http_request_handler!(pow_gate_access, |request: &mut Request| {
 
     let cfg = runtime::resolve(location_conf);
 
-    // 0. internal endpoints (challenge / solver.js / verify) bypass the gate.
+    // The decision is evaluated up front: the internal `/challenge` endpoint
+    // needs it too (a `challenge:<N>` override must shape what it issues, and
+    // the decision `map` keys on client attributes, so it evaluates the same
+    // on the endpoint request as on the gated one).
+    let decision_raw = eval_complex_value(request, location_conf.decision);
+    let decision = Decision::parse(&decision_raw);
+    let effective_difficulty = match decision {
+        Decision::Challenge { difficulty: Some(n) } => n,
+        _ => cfg.difficulty,
+    };
+
+    // 0. internal endpoints (challenge / solver.js / verify / pass) bypass the gate.
     let uri = unsafe { as_str(&(*raw).uri) };
     if !cfg.endpoint.is_empty() && uri.starts_with(&cfg.endpoint) {
         let suffix = &uri[cfg.endpoint.len()..];
-        return route_internal(request, &cfg, suffix).unwrap_or(Status::NGX_DECLINED);
+        return route_internal(
+            request,
+            &cfg,
+            suffix,
+            effective_difficulty,
+            &location_conf.nojs_page_cache,
+        )
+        .unwrap_or(Status::NGX_DECLINED);
     }
 
     // 1. trusted network (native `geo`) => allow.
@@ -51,9 +78,10 @@ ngx::http_request_handler!(pow_gate_access, |request: &mut Request| {
     }
 
     // 2. decision (native `map` on User-Agent).
-    let decision = eval_complex_value(request, location_conf.decision);
-    match decision.split_once(':') {
-        Some(("verify", name)) => {
+    match decision {
+        Decision::Allow => return Status::NGX_DECLINED,
+        Decision::Deny => return deny(request),
+        Decision::Verify(name) => {
             if let Some(ip) = runtime::client_ip(request) {
                 if verifier_allows(name, ip) {
                     return Status::NGX_DECLINED; // verified good bot
@@ -61,19 +89,23 @@ ngx::http_request_handler!(pow_gate_access, |request: &mut Request| {
             }
             // spoofed UA / unknown IP -> fall through to challenge
         }
-        _ => match decision.as_ref() {
-            "allow" => return Status::NGX_DECLINED,
-            "deny" => return deny(request),
-            _ => {} // "challenge" / "" -> challenge below
-        },
+        Decision::Challenge { .. } | Decision::ChallengeNoJs { .. } => {}
     }
 
-    // 3. challenge: cleared clients pass; everyone else gets the page.
+    // 3. challenge: cleared clients pass; everyone else gets the page the
+    // decision picked — JS PoW by default, meta-refresh for challenge:nojs.
     if has_valid_clearance(request, &cfg) {
-        Status::NGX_DECLINED
-    } else {
-        serve_challenge_page(request, &location_conf.page_cache)
+        return Status::NGX_DECLINED;
     }
+    if let Decision::ChallengeNoJs { delay } = decision {
+        // Return path: the RAW client-sent URI (still percent-encoded, unlike
+        // r->uri) — core additionally sanitizes it before it reaches a header.
+        let return_path = unsafe { as_str(&(*raw).unparsed_uri) };
+        let grant = nojs::issue(&cfg.key, return_path, delay, runtime::now());
+        let pass_url = format!("{}pass?t={}", cfg.endpoint, grant);
+        return serve_nojs_page(request, &location_conf.nojs_page_cache, &pass_url, delay);
+    }
+    serve_challenge_page(request, &location_conf.page_cache)
 });
 
 /// Register [`pow_gate_access`] on the ACCESS phase. Called from

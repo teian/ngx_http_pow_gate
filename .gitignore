@@ -1,5 +1,6 @@
 # Rust
 /target
+/tests/integration/target/
 **/*.rs.bk
 # Cargo.lock IS committed: the reproducible-build pipeline (docker/Dockerfile,
 # release.yml) pins dependency resolution to it.

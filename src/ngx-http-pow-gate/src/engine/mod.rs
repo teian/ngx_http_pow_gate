@@ -13,6 +13,7 @@
 //! docs/testing.md); this layer is the integration seam.
 
 pub mod clearance;
+pub mod nojs;
 pub mod pow;
 
 use ngx::ffi::{ngx_cycle_t, ngx_int_t};

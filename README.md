@@ -56,7 +56,14 @@ The gate is layered so most traffic never pays:
 | Verified good bot (Googlebot, Bingbot…)  | pass — IP-range + FCrDNS check         |
 | Known-abusive UA (GPTBot, Bytespider…)   | `403` — `map` → `deny`                 |
 | Already-cleared browser (valid cookie)   | pass — clearance cookie + proof        |
-| Everyone else                            | **challenge** — solve PoW, then pass   |
+| Everyone else                            | **challenge** — solve, then pass       |
+
+The challenge itself comes in tiers, chosen per client by the same `map`
+(see [docs/configuration.md › Decision values](docs/configuration.md#decision-values)):
+`challenge:js` (prove JS execution, no measurable work), `challenge` /
+`challenge:<N>` (proof-of-work at the configured or a per-decision difficulty,
+solved multi-threaded across Web Workers), and `challenge:nojs[:secs]` (a
+meta-refresh wait for text browsers like lynx/w3m — no JavaScript required).
 
 ---
 
@@ -401,3 +408,17 @@ rather than wrongly allowing — so it is safe to ship the gate without it.
 ## License
 
 BSD 2-Clause — see [LICENSE](LICENSE). © 2026 Frank Gehann.
+
+---
+
+## Acknowledgements
+
+Special thanks to **[Anubis](https://github.com/TecharoHQ/anubis)** by
+[Techaro](https://techaro.lol/), which inspired this project. Anubis pioneered
+the proof-of-work challenge as a practical, self-hostable defense against
+AI scrapers and demonstrated that "weighing the soul of a connection" can be
+done without CAPTCHAs or third-party services. This module explores the same
+idea as a native nginx dynamic module — the tiered challenge model
+(JS-execution proof, scaled proof-of-work, and the no-JS meta-refresh
+fallback) follows the path Anubis charted. If you need a standalone reverse
+proxy rather than an nginx module, go use Anubis.

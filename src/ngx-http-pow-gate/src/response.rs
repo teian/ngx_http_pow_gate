@@ -37,13 +37,34 @@ pub fn send(
     body: &[u8],
     set_cookie: Option<&str>,
 ) -> Status {
+    match set_cookie {
+        Some(c) => send_with_headers(r, status, content_type, body, &[("Set-Cookie", c)]),
+        None => send_with_headers(r, status, content_type, body, &[]),
+    }
+}
+
+/// Like [`send`], but with arbitrary extra response headers (`Location`,
+/// `Cache-Control`, `Set-Cookie`, …).
+pub fn send_with_headers(
+    r: &mut Request,
+    status: HTTPStatus,
+    content_type: &str,
+    body: &[u8],
+    headers: &[(&str, &str)],
+) -> Status {
     r.set_status(status);
     r.set_content_length_n(body.len());
     let _ = r.add_header_out("Content-Type", content_type);
-    if let Some(c) = set_cookie {
-        let _ = r.add_header_out("Set-Cookie", c);
+    for (name, value) in headers {
+        let _ = r.add_header_out(name, value);
     }
 
+    // CONTRACT: pass an empty body ONLY for statuses nginx itself terminates
+    // at the header (204). For anything else an empty body skips
+    // output_filter below, no last_buf is ever emitted, and the buffered
+    // response is never flushed — the client sees a hang, then EOF. Field
+    // note: observed on the /verify 400 path (2026-07); every error/redirect
+    // response therefore carries at least a tiny body.
     let rc = r.send_header();
     if rc != Status::NGX_OK || r.header_only() || body.is_empty() {
         return rc;
@@ -80,6 +101,20 @@ pub fn send_and_finish(
     set_cookie: Option<&str>,
 ) -> Status {
     let rc = send(r, status, content_type, body, set_cookie);
+    let raw: *mut ngx_http_request_t = r as *mut Request as *mut ngx_http_request_t;
+    unsafe { ngx_http_finalize_request(raw, rc.0) };
+    Status::NGX_DONE
+}
+
+/// [`send_with_headers`] + finalize — see [`send_and_finish`].
+pub fn send_and_finish_with_headers(
+    r: &mut Request,
+    status: HTTPStatus,
+    content_type: &str,
+    body: &[u8],
+    headers: &[(&str, &str)],
+) -> Status {
+    let rc = send_with_headers(r, status, content_type, body, headers);
     let raw: *mut ngx_http_request_t = r as *mut Request as *mut ngx_http_request_t;
     unsafe { ngx_http_finalize_request(raw, rc.0) };
     Status::NGX_DONE

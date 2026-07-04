@@ -20,12 +20,19 @@ use crate::runtime::{self, Cfg};
 const CHALLENGE_GRACE: i64 = 120;
 
 /// `GET {endpoint}challenge` → issue fresh challenge parameters as JSON.
-pub fn issue_challenge(r: &mut Request, cfg: &Cfg) -> Status {
+///
+/// `difficulty` is the caller-resolved effective value for this client: the
+/// configured default, or the `challenge:<N>`/`challenge:js` decision override
+/// (the decision `map` evaluates identically on this request, since it keys on
+/// the same client attributes). It is HMAC-bound into the token, so /verify
+/// holds the client to exactly this value.
+pub fn issue_challenge(r: &mut Request, cfg: &Cfg, difficulty: u64) -> Status {
     // No usable HMAC key -> refuse rather than issue a forgeable challenge token.
     if !cfg.key_ok {
-        return send_and_finish(r, HTTPStatus::SERVICE_UNAVAILABLE, "text/plain", &[], None);
+        return send_and_finish(
+            r, HTTPStatus::SERVICE_UNAVAILABLE, "text/plain", b"unavailable\n", None);
     }
-    let challenge = pow::issue(&cfg.key, cfg.difficulty, runtime::now(), CHALLENGE_GRACE);
+    let challenge = pow::issue(&cfg.key, difficulty, runtime::now(), CHALLENGE_GRACE);
     let body = serde_json::to_vec(&challenge).unwrap_or_default();
     send_and_finish(r, HTTPStatus::OK, "application/json", &body, None)
 }
@@ -58,6 +65,11 @@ struct Submission {
     nonce: u64,
     /// base64url SEC1 (uncompressed) public key.
     pubkey: String,
+    /// Difficulty echoed from the challenge. HMAC-bound by `token`, so it
+    /// cannot be lowered. `None` (a pre-0.2 solver) falls back to the
+    /// configured value — correct whenever no decision override is in play.
+    #[serde(default)]
+    difficulty: Option<u64>,
 }
 
 /// Body-ready callback: validate the solution, set the clearance cookie, finalize.
@@ -84,9 +96,11 @@ extern "C" fn verify_body(r: *mut ngx_http_request_t) {
         Err(_) => return finalize_status(req, HTTPStatus::BAD_REQUEST),
     };
 
-    // difficulty is the server's own configured value, never the client's.
+    // The echoed difficulty is authenticated by the HMAC token (issue bound
+    // it); anything the server didn't issue fails as BadToken in core.
+    let difficulty = sub.difficulty.unwrap_or(cfg.difficulty);
     let verdict = pow::verify_solution(
-        &cfg.key, &sub.salt, sub.exp, &sub.token, sub.nonce, cfg.difficulty, now,
+        &cfg.key, &sub.salt, sub.exp, &sub.token, sub.nonce, difficulty, now,
     );
     if verdict != pow::Verdict::Ok {
         return finalize_status(req, HTTPStatus::BAD_REQUEST);
@@ -102,9 +116,12 @@ extern "C" fn verify_body(r: *mut ngx_http_request_t) {
     let _ = send_and_finish(req, HTTPStatus::NO_CONTENT, "text/plain", &[], Some(&set_cookie));
 }
 
-/// Finalize with a status-only response (no body) — used for the `400` paths.
+/// Finalize with a terse error response — used for the `400`/`503` paths.
+/// Deliberately carries a (tiny) body: an empty non-204 body would skip
+/// `output_filter`, never emit a `last_buf`, and wedge the connection (the
+/// response is buffered but never flushed) — see `response::send_with_headers`.
 fn finalize_status(req: &mut Request, status: HTTPStatus) {
-    let _ = response::send(req, status, "text/plain", &[], None);
+    let _ = response::send(req, status, "text/plain", b"rejected\n", None);
     let raw: *mut ngx_http_request_t = req as *mut Request as *mut ngx_http_request_t;
     unsafe { ngx_http_finalize_request(raw, Status::NGX_OK.0) };
 }

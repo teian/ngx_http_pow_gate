@@ -43,6 +43,13 @@ pub const DEFAULT_PAGE: &[u8] =
 pub const SOLVER_JS: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/solver.js"));
 
+/// Embedded no-JS (meta-refresh) challenge page, served on `challenge:nojs`
+/// decisions. Overridable with `pow_gate_nojs_page`. Placeholders
+/// (`{{pass_url}}`, `{{delay}}`) are substituted **per request** — the grant
+/// token in the pass URL is one-shot — so only the raw template is cached.
+pub const DEFAULT_NOJS_PAGE: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/challenge-nojs.html"));
+
 /// Load + cache the challenge page bytes for a location.
 ///
 /// If `path` is empty (no `pow_gate_page`) -> use [`DEFAULT_PAGE`]; otherwise read
@@ -86,6 +93,49 @@ pub fn load_page(
     }
 }
 
+/// Load + cache the no-JS challenge template bytes for a location — RAW, no
+/// substitution (both its placeholders are per-request). Empty path -> the
+/// embedded [`DEFAULT_NOJS_PAGE`]; unreadable file -> `None` (config error,
+/// fail closed at startup like `pow_gate_page`).
+pub fn load_nojs_page(cf: *mut ngx_conf_t, path: ngx_str_t) -> Option<ngx_str_t> {
+    let raw: Vec<u8> = if path.len == 0 {
+        DEFAULT_NOJS_PAGE.to_vec()
+    } else {
+        let p = unsafe { as_str(&path) };
+        match std::fs::read(p) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("[pow_gate] pow_gate_nojs_page: cannot read {p:?}: {e}");
+                return None;
+            }
+        }
+    };
+    unsafe {
+        let data = ngx_pnalloc((*cf).pool, raw.len()) as *mut u8;
+        if data.is_null() {
+            return None;
+        }
+        std::ptr::copy_nonoverlapping(raw.as_ptr(), data, raw.len());
+        Some(ngx_str_t { len: raw.len(), data })
+    }
+}
+
+/// Render + serve the no-JS challenge page: substitute the one-shot pass URL
+/// and the delay into the cached template. `Cache-Control: no-store` because
+/// the embedded grant is time-bound and per-request.
+pub fn serve_nojs_page(r: &mut Request, template: &ngx_str_t, pass_url: &str, delay: i64) -> Status {
+    let raw = unsafe { as_bytes(template) };
+    let body = replace_all(&replace_all(raw, b"{{pass_url}}", pass_url.as_bytes()),
+                           b"{{delay}}", delay.to_string().as_bytes());
+    crate::response::send_and_finish_with_headers(
+        r,
+        HTTPStatus::OK,
+        "text/html; charset=utf-8",
+        &body,
+        &[("Cache-Control", "no-store")],
+    )
+}
+
 /// Replace every occurrence of `needle` in `haystack` (no overlap handling
 /// needed — the placeholders cannot overlap themselves).
 fn replace_all(haystack: &[u8], needle: &[u8], with: &[u8]) -> Vec<u8> {
@@ -115,12 +165,24 @@ pub fn serve_challenge_page(r: &mut Request, page: &ngx_str_t) -> Status {
 
 /// Dispatch a request to `{endpoint}*` to the right engine handler.
 ///
+/// `difficulty` is the effective PoW difficulty for THIS client (the
+/// `challenge:<N>`/`challenge:js` decision override already applied), so
+/// `/challenge` issues what the decision demands. `nojs_template` backs the
+/// `pass` endpoint's too-early re-challenge.
+///
 /// Returns `Some(status)` when the request was one of ours, `None` otherwise.
-pub fn route_internal(r: &mut Request, cfg: &Cfg, suffix: &str) -> Option<Status> {
+pub fn route_internal(
+    r: &mut Request,
+    cfg: &Cfg,
+    suffix: &str,
+    difficulty: u64,
+    nojs_template: &ngx_str_t,
+) -> Option<Status> {
     match suffix {
-        "challenge" => Some(crate::engine::pow::issue_challenge(r, cfg)),
+        "challenge" => Some(crate::engine::pow::issue_challenge(r, cfg, difficulty)),
         "solver.js" => Some(serve_solver(r)),
         "verify" => Some(crate::engine::pow::verify_solution(r)),
+        "pass" => Some(crate::engine::nojs::pass(r, cfg, nojs_template)),
         _ => None,
     }
 }

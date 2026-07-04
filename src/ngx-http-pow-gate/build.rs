@@ -17,6 +17,7 @@ fn main() {
     // Rebuild if the embedded fallback challenge page changes.
     // Assets live at the repo root, two levels up from this crate.
     println!("cargo:rerun-if-changed=../../assets/challenge.html");
+    println!("cargo:rerun-if-changed=../../assets/challenge-nojs.html");
     println!("cargo:rerun-if-changed=../../assets/solver.js");
 
     // `nginx-sys` exports the directory containing the nginx objects via the

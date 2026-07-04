@@ -53,7 +53,7 @@ const pubRaw = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey)
 const res = await fetch(`${BASE}/.pow/verify`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ salt: ch.salt, exp: ch.exp, token: ch.token, nonce, pubkey: b64url(pubRaw) }),
+  body: JSON.stringify({ salt: ch.salt, exp: ch.exp, token: ch.token, nonce, pubkey: b64url(pubRaw), difficulty: ch.difficulty }),
 });
 if (!res.ok) die(`verify rejected: HTTP ${res.status}`);
 // Anchored so a prefixed cookie name can't slip through as a partial match.

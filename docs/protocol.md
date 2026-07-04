@@ -26,6 +26,7 @@ replacing the solver, or debugging the handshake.
 | `GET`  | `{endpoint}challenge` | Issue fresh PoW parameters               | `engine::pow::issue_challenge`     |
 | `GET`  | `{endpoint}solver.js` | Serve the browser solver                 | `challenge::serve_solver`          |
 | `POST` | `{endpoint}verify`    | Submit a solution, receive clearance     | `engine::pow::verify_solution`     |
+| `GET`  | `{endpoint}pass`      | Redeem a no-JS meta-refresh grant        | `engine::nojs::pass`               |
 
 Routing is in [`src/challenge.rs`](../src/ngx-http-pow-gate/src/challenge.rs) (`route_internal`). These
 paths are owned by the module regardless of your `location` blocks.
@@ -40,24 +41,27 @@ Returns the parameters for one proof-of-work attempt.
 
 ```json
 {
-  "salt": "b64url-random-bound-to-client",
-  "target": "b64url-32-byte-threshold",
-  "expires_at": 1718450000
+  "salt": "hex-random-per-request",
+  "exp": 1718450000,
+  "difficulty": 50000,
+  "token": "b64url-hmac-over-salt-exp-difficulty"
 }
 ```
 
 | Field        | Meaning                                                                       |
 | ------------ | ----------------------------------------------------------------------------- |
-| `salt`       | Per-request random, **HMAC-bound** so `/verify` can confirm it issued it.      |
-| `target`     | 256-bit threshold; a solution must hash strictly below it.                    |
-| `expires_at` | Unix seconds. Solutions submitted after this are rejected (anti-precompute).  |
+| `salt`       | Per-request random (hex).                                                     |
+| `exp`        | Unix seconds. Solutions submitted after this are rejected (anti-precompute).  |
+| `difficulty` | Expected hash count for THIS client — the configured value, or the `challenge:<N>`/`challenge:js` decision override. |
+| `token`      | HMAC binding `salt`+`exp`+`difficulty` to the server (opaque to the client).  |
 
-`target` is derived from `pow_gate_difficulty`: `target = 2^256 / difficulty`
-(see `engine::pow::difficulty_to_target`). The client does **not** choose
-difficulty; it's server-controlled.
+The client derives `target = 2^256 / difficulty` itself and searches a nonce
+with `SHA-256(salt + nonce) < target`. The client does **not** choose the
+difficulty: it echoes it to `/verify`, but the `token` HMAC-binds the exact
+value issued — echoing anything else fails verification.
 
-The salt being HMAC-bound and short-lived is what stops an attacker from farming
-challenges out to a solver pool or precomputing solutions.
+The token being HMAC-bound and short-lived is what stops an attacker from
+farming challenges out to a solver pool or precomputing solutions.
 
 ---
 
@@ -86,17 +90,25 @@ Submits a found nonce plus the client's public key.
 
 ```json
 {
-  "salt": "<the salt from /challenge>",
+  "salt": "<from /challenge>",
+  "exp": 1718450000,
+  "token": "<from /challenge>",
   "nonce": 482193,
-  "pubkey": { "kty": "EC", "crv": "P-256", "x": "…", "y": "…" }
+  "pubkey": "<base64url SEC1 uncompressed P-256 public key>",
+  "difficulty": 50000
 }
 ```
 
+`difficulty` is the value echoed from `/challenge`; it is authenticated by
+`token`, never trusted on its own. (A body without it verifies against the
+configured difficulty — correct whenever no decision override is in play.)
+
 **Server checks (all must pass):**
 
-1. `salt` carries a valid HMAC (we issued it) and `expires_at` is in the future.
-2. `SHA-256(salt ‖ nonce) < target`.
-3. `pubkey` is a well-formed key of the expected type.
+1. `token` is the HMAC we issued over exactly this `salt`+`exp`+`difficulty`,
+   and `exp` is in the future.
+2. `SHA-256(salt ‖ nonce) < 2^256 / difficulty`.
+3. `pubkey` decodes (base64url).
 
 **Response on success** `204 No Content`:
 
@@ -118,6 +130,29 @@ the cookie and a fresh per-request proof, and the gate lets it through.
 
 ---
 
+## `GET {endpoint}pass` (no-JS flow)
+
+The redeem endpoint behind `challenge:nojs` decisions. The no-JS challenge page
+(`assets/challenge-nojs.html` or `pow_gate_nojs_page`) meta-refreshes to
+`{endpoint}pass?t=<grant>` after the configured delay. The grant is
+`base64url(JSON{path, iat, delay}) "." base64url(HMAC(key, "nojs|" + payload))`
+— domain-separated from the clearance format, one-shot in effect (it expires
+`nojs::NOJS_GRACE` = 120 s after issuance).
+
+| Grant state                     | Response                                                     |
+| ------------------------------- | ------------------------------------------------------------ |
+| authentic, waited ≥ `delay`     | `302` to the original path + clearance `Set-Cookie`          |
+| authentic, redeemed too early   | `200` — the no-JS page again with a **fresh** grant (wait restarts) |
+| forged / expired / malformed    | `302 /` (falls back into whatever challenge the decision assigns) |
+
+The minted clearance carries an **empty** public key — a no-JS client cannot
+sign per-request proofs — so under `pow_gate_require_proof on` its fetch/XHR
+requests would be challenged (moot for text browsers). Handlers:
+[`engine::nojs::pass`](../src/ngx-http-pow-gate/src/engine/nojs.rs),
+[`pow_gate_core::nojs`](../src/pow-gate-core/src/nojs.rs).
+
+---
+
 ## Token formats
 
 ### Clearance cookie (default name `pow_clearance`, set via `pow_gate_cookie_name`)
@@ -126,15 +161,13 @@ the cookie and a fresh per-request proof, and the gate lets it through.
 <cookie_name> = base64url(payload) "." base64url(HMAC-SHA256(key, payload))
 ```
 
-`payload` (compact JSON or fixed binary) contains:
+`payload` (compact JSON — see [`pow_gate_core::clearance::Clearance`](../src/pow-gate-core/src/clearance.rs)):
 
-| Field               | Purpose                                                       |
-| ------------------- | ------------------------------------------------------------- |
-| `ip_bucket`         | Coarse client-IP binding (tolerates NAT / mobile changes).    |
-| `ua_hash`           | Hash of the User-Agent at issue time.                         |
-| `pubkey_thumbprint` | Thumbprint of the client key — links cookie to the proof.     |
-| `issued_at`         | Unix seconds.                                                 |
-| `expires_at`        | `issued_at + pow_gate_clearance_ttl`.                         |
+| Field | Purpose                                                                  |
+| ----- | ------------------------------------------------------------------------ |
+| `pk`  | Client public key (base64url SEC1) — binds the cookie to the proof key. Empty for no-JS clearances (they cannot sign proofs). |
+| `iat` | Issued-at, unix seconds.                                                 |
+| `exp` | `iat + pow_gate_clearance_ttl`.                                          |
 
 Verified in [`src/engine/clearance.rs`](../src/ngx-http-pow-gate/src/engine/clearance.rs):
 constant-time tag comparison (`subtle`), expiry check, then proof check.

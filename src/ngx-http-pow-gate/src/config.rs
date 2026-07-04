@@ -90,6 +90,12 @@ pub struct LocationConf {
     pub page_path: ngx_str_t,  // pow_gate_page <file>
     pub page_cache: ngx_str_t, // rendered bytes (loaded once at merge)
 
+    // ── no-JS challenge page (served on `challenge:nojs` decisions). Cached
+    //    RAW at merge: its placeholders ({{pass_url}}, {{delay}}) are
+    //    per-request, unlike the JS page's config-time ones. ──
+    pub nojs_page_path: ngx_str_t,  // pow_gate_nojs_page <file>
+    pub nojs_page_cache: ngx_str_t, // template bytes (loaded once at merge)
+
     // ── PoW + token tunables (were http-only; now inherit to server/location) ──
     pub difficulty: ngx_uint_t,   // pow_gate_difficulty N
     pub hmac_key_file: ngx_str_t, // pow_gate_hmac_key_file <file>
@@ -126,7 +132,7 @@ const SERVER_LOCATION: ngx_uint_t = (NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF) as n
 // ───────────────────────────── command table ─────────────────────────────────
 
 #[no_mangle]
-pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 18] = [
+pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 19] = [
     // pow_gate on|off;
     ngx_command_t {
         name: ngx_string!("pow_gate"),
@@ -161,6 +167,15 @@ pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 18] = [
         set: Some(ngx_conf_set_str_slot),
         conf: NGX_HTTP_LOC_CONF_OFFSET,
         offset: offset_of!(LocationConf, page_path),
+        post: ptr::null_mut(),
+    },
+    // pow_gate_nojs_page <file>;
+    ngx_command_t {
+        name: ngx_string!("pow_gate_nojs_page"),
+        type_: HTTP_SERVER_LOCATION | NGX_CONF_TAKE1 as ngx_uint_t,
+        set: Some(ngx_conf_set_str_slot),
+        conf: NGX_HTTP_LOC_CONF_OFFSET,
+        offset: offset_of!(LocationConf, nojs_page_path),
         post: ptr::null_mut(),
     },
     // (no pow_gate_solver: the solver is always served by the module from the
@@ -348,6 +363,7 @@ pub extern "C" fn merge_location_conf(
         merge_ptr(&mut conf.trusted, prev.trusted);
         merge_ptr(&mut conf.decision, prev.decision);
         merge_str(&mut conf.page_path, &prev.page_path, b"");
+        merge_str(&mut conf.nojs_page_path, &prev.nojs_page_path, b"");
 
         merge_uint(&mut conf.difficulty, prev.difficulty, 50000);
         merge_str(&mut conf.hmac_key_file, &prev.hmac_key_file, b"");
@@ -391,6 +407,12 @@ pub extern "C" fn merge_location_conf(
             // key check above. The solver is always the embedded SOLVER_JS.
             match load_page(cf, conf.page_path, conf.difficulty, conf.endpoint) {
                 Some(page) => conf.page_cache = page,
+                None => return NGX_CONF_ERROR,
+            }
+            // Same for the no-JS template (challenge:nojs decisions): cache the
+            // RAW bytes — {{pass_url}}/{{delay}} are substituted per request.
+            match crate::challenge::load_nojs_page(cf, conf.nojs_page_path) {
+                Some(page) => conf.nojs_page_cache = page,
                 None => return NGX_CONF_ERROR,
             }
         }

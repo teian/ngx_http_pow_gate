@@ -1,10 +1,11 @@
 //! Challenge issuance and solution verification — the stateless PoW handshake.
 //!
-//! The server keeps **no per-challenge state**. It binds the random `salt` and
-//! the expiry to itself with an HMAC `token`; at verify time it re-derives that
-//! token to confirm the pair is one it issued and unexpired, then checks the
-//! hash. The difficulty (hence the target) is taken from server config at verify
-//! time, never from the client — so a client cannot ask for an easier target.
+//! The server keeps **no per-challenge state**. It binds the random `salt`, the
+//! expiry *and the difficulty* to itself with an HMAC `token`; at verify time it
+//! re-derives that token to confirm the triple is one it issued and unexpired,
+//! then checks the hash. The client echoes the difficulty it was issued, but the
+//! token authenticates it — a client cannot substitute an easier target, and
+//! per-request difficulty (`challenge:<N>` decisions) stays stateless.
 
 use crate::codec::{b64url, hex};
 use crate::mac::{ct_eq, hmac};
@@ -23,10 +24,10 @@ pub struct Challenge {
     pub token: String,
 }
 
-/// What the salt/exp are bound under. Kept private and stable so issue and verify
-/// always agree.
-fn binding(salt: &str, exp: i64) -> Vec<u8> {
-    format!("{salt}|{exp}").into_bytes()
+/// What the salt/exp/difficulty are bound under. Kept private and stable so
+/// issue and verify always agree.
+fn binding(salt: &str, exp: i64, difficulty: u64) -> Vec<u8> {
+    format!("{salt}|{exp}|{difficulty}").into_bytes()
 }
 
 /// Issue a fresh challenge. `now` and `ttl` are seconds; `ttl` bounds how long the
@@ -36,7 +37,7 @@ pub fn issue(key: &[u8], difficulty: u64, now: i64, ttl: i64) -> Challenge {
     getrandom::getrandom(&mut raw).expect("OS RNG");
     let salt = hex(&raw);
     let exp = now + ttl;
-    let token = b64url(&hmac(key, &binding(&salt, exp)));
+    let token = b64url(&hmac(key, &binding(&salt, exp, difficulty)));
     Challenge {
         salt,
         exp,
@@ -56,8 +57,10 @@ pub enum Verdict {
 
 /// Verify a submitted solution against a challenge the server issued.
 ///
-/// `difficulty` is the server's current configured value (NOT echoed from the
-/// client). All of: token authentic, not expired, and hash below target.
+/// `difficulty` is the value the client echoes from the challenge it received —
+/// but the token binds it, so anything other than the difficulty the server
+/// issued for exactly this salt/exp fails as `BadToken`. All of: token
+/// authentic, not expired, and hash below target.
 pub fn verify_solution(
     key: &[u8],
     salt: &str,
@@ -67,7 +70,7 @@ pub fn verify_solution(
     difficulty: u64,
     now: i64,
 ) -> Verdict {
-    let expect = b64url(&hmac(key, &binding(salt, exp)));
+    let expect = b64url(&hmac(key, &binding(salt, exp, difficulty)));
     if !ct_eq(expect.as_bytes(), token.as_bytes()) {
         return Verdict::BadToken;
     }

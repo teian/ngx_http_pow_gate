@@ -69,3 +69,28 @@ fn client_cannot_downgrade_difficulty() {
         Verdict::Ok
     );
 }
+
+#[test]
+fn echoed_difficulty_is_bound_by_the_token() {
+    // The client echoes the difficulty back, but it is HMAC-bound: echoing a
+    // lower one (with a matching trivial solution) must fail as BadToken.
+    let c = issue(KEY, 1 << 28, 1000, 30);
+    let easy_nonce = solve(&c.salt, 4);
+    assert_eq!(
+        verify_solution(KEY, &c.salt, c.exp, &c.token, easy_nonce, 4, 1005),
+        Verdict::BadToken
+    );
+}
+
+#[test]
+fn per_request_difficulty_verifies_statelessly() {
+    // A challenge issued with a per-decision override verifies with the echoed
+    // override — no server-side state needed.
+    let c = issue(KEY, 512, 1000, 30);
+    assert_eq!(c.difficulty, 512);
+    let nonce = solve(&c.salt, c.difficulty);
+    assert_eq!(
+        verify_solution(KEY, &c.salt, c.exp, &c.token, nonce, c.difficulty, 1005),
+        Verdict::Ok
+    );
+}

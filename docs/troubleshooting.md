@@ -77,3 +77,20 @@ same-origin subresources means "inspect what those responses contain", not
 calls (the embedded solver's wrapper exists only on the challenge page, and it
 does not cover `XMLHttpRequest`, i.e. jQuery). Until such integration exists,
 `on` challenges all of a site's AJAX even though static assets now pass.
+
+---
+
+## Solve is much slower than the difficulty table predicts
+
+The solver normally hashes in parallel Web Workers (it loads
+`{endpoint}solver.js` a second time *as* the worker script). If your site's
+`Content-Security-Policy` blocks that — a `worker-src` (or fallback
+`child-src`/`script-src`/`default-src`) that doesn't allow `'self'` — worker
+spawning fails and the solver silently drops to its single-threaded in-page
+loop: correct, but one core instead of all of them. The browser console shows
+the CSP violation. Fix: allow `worker-src 'self'` (the worker is the same
+same-origin file; no `blob:` needed).
+
+The last-resort fallback (pure-JS hasher fails its startup self-test) uses
+`crypto.subtle` per hash and is ~30× slower still — if you ever see that,
+something is very wrong with the client's JS engine, not with the gate.

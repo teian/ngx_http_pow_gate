@@ -58,6 +58,18 @@ id just means that piece of feedback isn't shown. But omitting `pow-error` hides
 failures from the user, and omitting progress elements makes the wait opaque, so
 include them unless you have a reason not to.
 
+The percent value is the *probability* that the solve has finished by now
+(`1 − e^(−hashes/difficulty)`), capped at 99 until verification succeeds — a
+proof-of-work search has no fixed length, so a linear "hashes done" bar would
+park at 99% whenever a solve runs long. Expect the bar to advance quickly at
+first and slow toward the end; that is correct behavior, not a stall.
+
+One CSP note: the solver loads `{endpoint}solver.js` a *second* time as a Web
+Worker script to hash on all cores. If your page ships a
+`Content-Security-Policy`, make sure `worker-src 'self'` (or an equivalent
+fallback directive) is allowed — otherwise the solver still works but drops to
+a single-threaded loop. No `blob:` allowance is needed.
+
 `pow-progress` is flexible on purpose:
 
 ```html

@@ -24,6 +24,7 @@ gate.
 | `pow_gate_trusted`         | server, location          | `$var`       | (unset)     | `LocationConf.trusted`          |
 | `pow_gate_decision`        | server, location          | `$var`       | `challenge` | `LocationConf.decision`         |
 | `pow_gate_page`            | http, server, location    | `<file>`     | embedded    | `LocationConf.page_path`        |
+| `pow_gate_nojs_page`       | http, server, location    | `<file>`     | embedded    | `LocationConf.nojs_page_path`   |
 | `pow_gate_difficulty`      | http, server, location    | `N`          | `50000`     | `LocationConf.difficulty`       |
 | `pow_gate_hmac_key_file`   | http, server, location    | `<file>`     | —           | `LocationConf.hmac_key_file`    |
 | `pow_gate_clearance_ttl`   | http, server, location    | `<time>`     | `12h`       | `LocationConf.clearance_ttl`    |
@@ -162,6 +163,20 @@ guide — contract, placeholders, minimal template, reload caveat — in
 > its embedded copy — there is no override directive. It is the client half of the
 > proof-of-work protocol and must stay in lockstep with the engine, so it ships
 > with the module. You customize the *page*; the solver is fixed.
+
+### `pow_gate_nojs_page <file>;`
+
+> Context: `http`, `server`, `location` · Default: embedded `challenge-nojs.html`
+
+Path to a custom **no-JS** challenge page, served on `challenge:nojs` decisions
+(see [Decision values](#decision-values)). Unlike `pow_gate_page`, its
+placeholders are substituted **per request** (the grant token is one-shot):
+`{{pass_url}}` — the redeem URL your page must meta-refresh or link to — and
+`{{delay}}` — the wait in seconds. The template bytes are still cached at
+config time, and an unreadable file is a config-load error, same as
+`pow_gate_page`. The embedded default
+([`assets/challenge-nojs.html`](../assets/challenge-nojs.html)) works in lynx,
+w3m and any browser with JavaScript disabled.
 
 ### `pow_gate_difficulty N;`
 
@@ -370,16 +385,44 @@ Set-Cookie: gate_clearance=<token>; Path=/; Domain=.example.com; Max-Age=3600; S
 
 `pow_gate_decision` understands exactly these:
 
-| Value           | Effect                                                                 |
-| --------------- | ---------------------------------------------------------------------- |
-| `allow`         | Pass to upstream. No challenge.                                        |
-| `deny`          | `403 Forbidden`. No challenge offered.                                 |
-| `challenge`     | Must solve PoW (unless already cleared). The default.                  |
-| `verify:<name>` | Run `pow_gate_verifier <name>`; pass if it confirms the IP, else challenge. |
-| *(empty)*       | Treated as `challenge`.                                                |
+| Value                   | Effect                                                                 |
+| ----------------------- | ---------------------------------------------------------------------- |
+| `allow`                 | Pass to upstream. No challenge.                                        |
+| `deny`                  | `403 Forbidden`. No challenge offered.                                 |
+| `challenge`             | Must solve PoW at the configured difficulty (unless already cleared). The default. |
+| `challenge:<N>`         | Must solve PoW at difficulty `N` — per-client cost without a separate `location`. The issued difficulty is HMAC-bound into the challenge token, so a client cannot swap in an easier one. |
+| `challenge:js`          | JS-execution proof only (difficulty 1): the keypair + verify roundtrip is the whole test, no measurable hashing. The cheap tier for clients you barely suspect. |
+| `challenge:nojs`        | No-JS meta-refresh challenge: wait `2` seconds, then redeemed via `{endpoint}pass`. For text browsers (lynx, w3m), accessibility setups, JS-free clients. |
+| `challenge:nojs:<secs>` | Same, explicit wait (clamped to 1–30 s).                               |
+| `verify:<name>`         | Run `pow_gate_verifier <name>`; pass if it confirms the IP, else challenge. |
+| *(empty)*               | Treated as `challenge`.                                                |
 
 `verify:<name>` that *fails* falls through to a challenge — it does **not** deny.
-That way a real client behind an odd UA still has a route through.
+That way a real client behind an odd UA still has a route through. Anything
+unparsable is treated as plain `challenge` — a typo in a `map` can never open
+the gate.
+
+Tier intuition (mirrors what Anubis calls its challenge methods): `challenge:js`
+for low suspicion, `challenge`/`challenge:<N>` scaling up with suspicion,
+`challenge:nojs` **only** where you deliberately route text-browser UAs — it is
+the weakest tier (a headless browser waits it out trivially) and is therefore
+never reachable unless your `map` sends a client there:
+
+```nginx
+map $http_user_agent $pow_decision {
+    default                          challenge:js;    # cheap JS proof
+    ~*(python|curl|go-http|scrapy)   challenge:500000; # expensive for tools
+    ~*(lynx|w3m|links|elinks)        challenge:nojs;  # text browsers: time-based
+    ~*(gptbot|bytespider)            deny;
+    ~*(googlebot|bingbot)            verify:search_engines;
+}
+```
+
+The no-JS clearance cookie carries no key binding (a text browser cannot sign
+per-request proofs), so under `pow_gate_require_proof on` such a client's
+fetch/XHR requests would still be challenged — irrelevant for actual text
+browsers, but do not route ordinary browsers to `challenge:nojs` on a site
+that enforces proofs.
 
 ---
 
@@ -492,15 +535,22 @@ location /search/ { pow_gate on; pow_gate_difficulty 200000; pow_gate_decision $
 
 ## Tuning `pow_gate_difficulty`
 
-`N` is the expected hash count. Rough intuition (SHA-256 in WebCrypto, modern laptop
-≈ a few hundred k hashes/s, much less on low-end phones):
+`N` is the expected hash count. Rough intuition: the solver hashes in pure JS
+across one Web Worker per core — a modern laptop does ~2 MH/s *per thread*
+(8–15 MH/s total), a low-end phone roughly a tenth of that. Where workers are
+unavailable (strict CSP `worker-src`, very old browsers) it falls back to a
+single thread at the per-thread rate:
 
-| `N`        | ~Human wait      | Use when                                         |
-| ---------- | ---------------- | ------------------------------------------------ |
-| `10000`    | barely noticeable | light deterrence, very latency-sensitive pages   |
-| `50000`    | ~0.1–0.5 s        | sensible default                                 |
-| `200000`   | ~0.5–2 s          | aggressive scraping, you accept some human delay |
-| `1000000+` | several seconds   | targeted abuse; expect complaints from slow devices |
+| `N`          | ~Human wait            | Use when                                         |
+| ------------ | ---------------------- | ------------------------------------------------ |
+| `50000`      | imperceptible (<0.1 s) | light deterrence, very latency-sensitive pages   |
+| `500000`     | ~0.1–0.5 s             | sensible deterrence                              |
+| `2000000`    | ~0.5–2 s               | aggressive scraping, you accept some human delay |
+| `10000000+`  | several seconds        | targeted abuse; expect complaints from slow devices |
+
+> The compiled-in default is still `50000`, chosen when the solver was ~30×
+> slower. With the worker solver that costs an attacker only ~25 ms of one
+> core per clearance — consider raising it explicitly.
 
 Pick the smallest `N` that meaningfully taxes a scraping farm. Cost is linear in
 `N` for the attacker *and* the honest visitor — there's no free lunch, so combine

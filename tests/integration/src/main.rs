@@ -265,5 +265,153 @@ fn main() {
     }
     println!("✓ verified good-bot allowed via IP-range verifier");
 
+    // 8. challenge:<N> — a UA mapped to challenge:5000 is issued exactly that
+    //    difficulty, the echoed value verifies, and echoing a LOWER one with
+    //    the same token is rejected (HMAC-bound).
+    let hard: Challenge = match ureq::get(&format!("{base}/.pow/challenge"))
+        .set("User-Agent", "hardbot/1.0")
+        .call()
+    {
+        Ok(r) => r.into_json().unwrap_or_else(|e| fail(format!("bad hardbot challenge json: {e}"))),
+        Err(e) => fail(format!("hardbot GET /.pow/challenge failed: {e}")),
+    };
+    if hard.difficulty != 5000 {
+        fail(format!("challenge:5000 override not applied — issued difficulty {}", hard.difficulty));
+    }
+    let mut hard_nonce = 0u64;
+    while !solution_valid(&hard.salt, hard_nonce, hard.difficulty) {
+        hard_nonce += 1;
+    }
+    let downgrade = ureq::post(&format!("{base}/.pow/verify")).send_json(ureq::json!({
+        "salt": hard.salt, "exp": hard.exp, "token": hard.token,
+        "nonce": hard_nonce, "pubkey": pubkey, "difficulty": 4,
+    }));
+    match downgrade {
+        Err(ureq::Error::Status(400, _)) => println!("✓ difficulty downgrade rejected (400)"),
+        other => fail(format!("downgraded difficulty expected 400, got {other:?}")),
+    }
+    let hard_ok = ureq::post(&format!("{base}/.pow/verify")).send_json(ureq::json!({
+        "salt": hard.salt, "exp": hard.exp, "token": hard.token,
+        "nonce": hard_nonce, "pubkey": pubkey, "difficulty": hard.difficulty,
+    }));
+    match hard_ok {
+        Ok(r) if r.status() == 204 || r.status() == 200 => {
+            println!("✓ challenge:5000 solved + verified with echoed difficulty")
+        }
+        other => fail(format!("hardbot verify expected 204, got {other:?}")),
+    }
+
+    // 9. challenge:js — the lightweight tier issues difficulty 1 (any nonce).
+    let js: Challenge = match ureq::get(&format!("{base}/.pow/challenge"))
+        .set("User-Agent", "litebot/1.0")
+        .call()
+    {
+        Ok(r) => r.into_json().unwrap_or_else(|e| fail(format!("bad litebot challenge json: {e}"))),
+        Err(e) => fail(format!("litebot GET /.pow/challenge failed: {e}")),
+    };
+    if js.difficulty != 1 {
+        fail(format!("challenge:js expected difficulty 1, got {}", js.difficulty));
+    }
+    let mut js_nonce = 0u64;
+    while !solution_valid(&js.salt, js_nonce, js.difficulty) {
+        js_nonce += 1;
+    }
+    let js_ok = ureq::post(&format!("{base}/.pow/verify")).send_json(ureq::json!({
+        "salt": js.salt, "exp": js.exp, "token": js.token,
+        "nonce": js_nonce, "pubkey": pubkey, "difficulty": js.difficulty,
+    }));
+    match js_ok {
+        Ok(r) if r.status() == 204 || r.status() == 200 => {
+            println!("✓ challenge:js (difficulty 1) verified")
+        }
+        other => fail(format!("litebot verify expected 204, got {other:?}")),
+    }
+
+    // 10. challenge:nojs — the full meta-refresh flow, exactly as a text
+    //     browser walks it. No redirect-following: we assert each hop.
+    let agent = ureq::builder().redirects(0).build();
+    let nojs_path = "/?q=some+query&page=2"; // return path must survive verbatim
+    let nojs_page = match agent
+        .get(&format!("{base}{nojs_path}"))
+        .set("User-Agent", "nojsbot/1.0")
+        .call()
+    {
+        Ok(r) => r.into_string().unwrap_or_default(),
+        Err(ureq::Error::Status(s, _)) => fail(format!("nojs GET expected 200 page, got {s}")),
+        Err(e) => fail(format!("nojs GET failed: {e}")),
+    };
+    if !nojs_page.contains("http-equiv=\"refresh\"") {
+        fail("challenge:nojs did not serve the meta-refresh page");
+    }
+    let pass_url = extract_pass_url(&nojs_page)
+        .unwrap_or_else(|| fail("no pass URL in the nojs page"));
+    println!("✓ nojs page served with meta refresh → {pass_url}");
+
+    // 10a. redeeming immediately must NOT clear — it re-serves the page with a
+    //      fresh grant (the wait starts over).
+    let early = match agent
+        .get(&format!("{base}{pass_url}"))
+        .set("User-Agent", "nojsbot/1.0")
+        .call()
+    {
+        Ok(r) => {
+            if r.header("set-cookie").is_some() {
+                fail("too-early pass redeem set a clearance cookie");
+            }
+            r.into_string().unwrap_or_default()
+        }
+        other => fail(format!("too-early pass expected 200 page, got {other:?}")),
+    };
+    if !early.contains("http-equiv=\"refresh\"") {
+        fail("too-early pass redeem did not re-serve the nojs page");
+    }
+    let fresh_pass_url = extract_pass_url(&early)
+        .unwrap_or_else(|| fail("no pass URL in the too-early re-challenge"));
+    println!("✓ too-early redeem re-challenged without cookie");
+
+    // 10b. wait out the (fresh) grant's delay, then redeem: 302 + cookie +
+    //      Location = the original path, verbatim.
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    let redeemed = match agent
+        .get(&format!("{base}{fresh_pass_url}"))
+        .set("User-Agent", "nojsbot/1.0")
+        .call()
+    {
+        Ok(r) if r.status() == 302 => r,
+        other => fail(format!("pass redeem expected 302, got {other:?}")),
+    };
+    let nojs_cookie = redeemed
+        .header("set-cookie")
+        .unwrap_or_else(|| fail("pass redeem did not set a clearance cookie"))
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .to_string();
+    let location = redeemed.header("location").unwrap_or("").to_string();
+    if location != nojs_path {
+        fail(format!("pass redirect Location {location:?} != original path {nojs_path:?}"));
+    }
+    println!("✓ pass redeemed after wait: 302 to original path + cookie");
+
+    // 10c. the no-JS clearance opens the gate like any other.
+    let nojs_cleared = ureq::get(&format!("{base}/default-proof"))
+        .set("Cookie", &nojs_cookie)
+        .set("User-Agent", "nojsbot/1.0")
+        .call()
+        .map(|r| r.into_string().unwrap_or_default())
+        .unwrap_or_default();
+    if !nojs_cleared.contains("upstream-content") {
+        fail("nojs clearance cookie did not reach upstream");
+    }
+    println!("✓ nojs clearance cookie reached upstream");
+
     println!("\nE2E PASS");
+}
+
+/// Pull the pass URL out of the nojs page (`content="2;url=<here>"`).
+fn extract_pass_url(page: &str) -> Option<String> {
+    let i = page.find(";url=")? + 5;
+    let rest = &page[i..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
 }

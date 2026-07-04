@@ -17,12 +17,15 @@
 
 pub mod clearance;
 pub mod codec;
+pub mod decision;
 mod mac;
+pub mod nojs;
 pub mod pow;
 pub mod proof;
 pub mod ranges;
 pub mod target;
 
 pub use clearance::Clearance;
+pub use decision::Decision;
 pub use pow::Challenge;
 pub use target::{difficulty_to_target, hash_below};

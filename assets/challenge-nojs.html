@@ -1,0 +1,37 @@
+<!doctype html>
+<!--
+  challenge-nojs.html — the no-JS (meta-refresh) challenge page, served when a
+  `challenge:nojs` decision hits a client without clearance. Embedded into the
+  module; operators may override with `pow_gate_nojs_page` (see
+  docs/challenge-page.md).
+
+  Placeholders substituted PER REQUEST (unlike the JS page, which renders once
+  at config time): {{pass_url}} — the one-shot redeem URL carrying the signed
+  grant; {{delay}} — the wait in seconds.
+
+  Works in lynx/w3m/dillo and with JS disabled: meta refresh if supported,
+  a plain link as fallback. No scripts, no styles that matter.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="{{delay}};url={{pass_url}}">
+  <meta name="robots" content="noindex">
+  <title>One moment…</title>
+  <style>
+    body { font: 16px/1.6 system-ui, sans-serif; max-width: 36em; margin: 15vh auto; padding: 0 1em; color: #222; background: #fff; }
+    @media (prefers-color-scheme: dark) { body { color: #ddd; background: #111; } }
+    a { color: inherit; }
+  </style>
+</head>
+<body>
+  <h1>One moment&hellip;</h1>
+  <p>Checking your browser. You will be forwarded in about {{delay}}&nbsp;seconds
+     &mdash; no JavaScript required.</p>
+  <p>If nothing happens, <a href="{{pass_url}}">continue manually</a>
+     (wait {{delay}} seconds first, or you will land back on this page).</p>
+  <p lang="de">Ihr Browser wird &uuml;berpr&uuml;ft. Sie werden in etwa
+     {{delay}}&nbsp;Sekunden weitergeleitet &mdash; ganz ohne JavaScript.
+     Falls nichts passiert, nutzen Sie den Link oben.</p>
+</body>
+</html>

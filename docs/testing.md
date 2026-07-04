@@ -129,17 +129,26 @@ across reloads, a custom `pow_gate_page`. It publishes nginx + the module on
 usual 8080 tenants):
 
 ```bash
-./scripts/dev.sh up       # build + start, prints what to try
-./scripts/dev.sh reload   # apply an edited docker/nginx.dev.conf (no rebuild)
+./scripts/dev.sh up       # build + start, prints what to try (default when run bare)
+./scripts/dev.sh check    # smoke checks + full node handshake; exits 1 on any failure
+./scripts/dev.sh reload   # nginx -t, then apply an edited docker/nginx.dev.conf (no rebuild)
 ./scripts/dev.sh logs     # follow nginx logs
-./scripts/dev.sh down     # stop + remove
+./scripts/dev.sh down     # stop + remove, including volumes
 ```
 
+The script needs `docker compose` and can be run from anywhere (it cd's to the
+repo root itself). `check` needs node ≥ 20 for the handshake part; without node
+it still runs the curl smoke checks and just skips the automated solve.
+
 Open `http://localhost:12222/` in a browser: you get the challenge page, the
-solver runs (difficulty 5000 — a browser hashes far slower than native, so this
+solver runs (a browser hashes far slower than native, so this
 still shows the progress bar for a few seconds), and after
-verification a reload serves the stubbed upstream content via the clearance
-cookie. Useful curl checks (also printed by `dev.sh up`):
+verification a reload serves the stubbed upstream page via the clearance
+cookie. That page ([docker/www/index.html](../docker/www/index.html)) renders
+the **computation result** of the solve — winning nonce, hashes tried, solve
+time, hash rate, salt and the recomputed winning hash (leading zeros
+highlighted) — from the `pow-result` record the solver leaves in
+`sessionStorage`. Useful curl checks (also printed by `dev.sh up`):
 
 | Request | Expected |
 | --- | --- |
@@ -147,6 +156,13 @@ cookie. Useful curl checks (also printed by `dev.sh up`):
 | `curl localhost:12222/healthz` | `ok` — excluded path, never gated |
 | `curl -A verifierbot localhost:12222/` | upstream content — verified good bot |
 | `curl -iA denybot localhost:12222/` | denied |
+
+`./scripts/dev.sh check` runs the same checks headlessly: curl smoke checks
+(challenge served, endpoints up, excluded path, verifier allow, deny) plus the
+full handshake via [tests/pow-clearance/solve-test.mjs](../tests/pow-clearance/solve-test.mjs) — a
+node port of `assets/solver.js` that solves the PoW, posts `/verify`, replays
+the clearance cookie as a top-level navigation and expects the upstream
+marker. It needs only node ≥ 20, no cargo.
 
 Unlike `nginx.test.conf` (baked into the image), [docker/nginx.dev.conf](../docker/nginx.dev.conf)
 is **volume-mounted**: tweak difficulty, cookies, decisions, or point

@@ -47,8 +47,8 @@ v<module-version> — <short content phrase> (nginx <nginx-version>)
 
 | Occasion | Title |
 | --- | --- |
-| Feature release | `v0.2.0 — per-path difficulty & challenge page theming (nginx 1.31.2)` |
-| Bugfix release | `v0.1.1 — fix clearance cookie SameSite handling (nginx 1.31.2)` |
+| Feature release | `v0.2.0 — per-path difficulty & challenge page theming (nginx 1.31.3)` |
+| Bugfix release | `v0.1.1 — fix clearance cookie SameSite handling (nginx 1.31.3)` |
 | Pure nginx rebuild | `v0.1.1 — rebuild for nginx 1.31.3` |
 
 Rules:
@@ -68,7 +68,7 @@ Both axes plus the platform, so a downloaded file is self-describing:
 
 ```
 ngx_http_pow_gate_module-<module-version>-nginx<nginx-version>-<libc>-<arch>.so
-ngx_http_pow_gate_module-0.1.1-nginx1.31.2-glibc-amd64.so
+ngx_http_pow_gate_module-0.1.1-nginx1.31.3-glibc-amd64.so
 ```
 
 `release.yml` derives both versions from their sources of truth at build time —

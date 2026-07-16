@@ -37,7 +37,7 @@ jobs:
         run: docker build -f docker/Dockerfile --target nginx-smoke-alpine .
       - name: open PR
         if: steps.update.outputs.updated == 'true'
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.NGINX_UPDATE_TOKEN || github.token }}
           branch: nginx-update/${{ steps.update.outputs.new }}

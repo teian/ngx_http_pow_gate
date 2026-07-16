@@ -17,7 +17,7 @@ clearance cookies, and a *verified good-bot* allowlist (official IP ranges + FCr
 
 > **Status:** functional end-to-end, no scaffold left. The engine
 > (`src/pow-gate-core`) is **unit-tested** (31 tests), the solver is real, and the
-> module **compiles against nginx 1.31.2, loads, and passes a full live handshake**
+> module **compiles against nginx 1.31.3, loads, and passes a full live handshake**
 > (challenge → solve → verify → cleared) plus the **good-bot verifier** — all four
 > Docker pipeline stages green ([docs/testing.md](docs/testing.md)). See
 > [What's implemented](#whats-implemented).
@@ -291,7 +291,7 @@ the request and calls into it. See [docs/testing.md](docs/testing.md).
 
 ```bash
 # build against a CONFIGURED nginx source tree (./configure first — see below)
-export NGINX_SOURCE_DIR=/path/to/nginx-1.31.2
+export NGINX_SOURCE_DIR=/path/to/nginx-1.31.3
 cargo build --release -p ngx-http-pow-gate
 
 # the artifact, renamed to the name used in load_module:
@@ -358,7 +358,7 @@ a claim. There is no scaffold left.
 | Browser solver (`assets/solver.js`) | real WebCrypto keygen + 256-bit PoW + proof + IndexedDB |
 | Challenge page (`assets/challenge.html`) | themed (light/dark) + i18n (26 languages) |
 | Directives, config structs, inheritance merge | compiles + `nginx -t` passes |
-| Module builds against nginx 1.31.2 & loads (glibc + musl, amd64 + arm64) | module-build + nginx-smoke green for every libc×arch |
+| Module builds against nginx 1.31.3 & loads (glibc + musl, amd64 + arm64) | module-build + nginx-smoke green for every libc×arch |
 | ACCESS handler + phase registration | handler runs (registered in `postconfiguration`) |
 | `/.pow/` endpoints — challenge JSON, solver, **async `POST /verify` body** | served correctly in the live test |
 | Response I/O — challenge page, JSON, `Set-Cookie`, `204` | written via the `ngx` output chain |

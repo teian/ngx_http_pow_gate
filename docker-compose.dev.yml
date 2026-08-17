@@ -17,7 +17,7 @@ services:
       # DEV_TARGET=nginx-smoke-alpine to poke the musl build instead
       target: ${DEV_TARGET:-nginx-smoke-debian}
       args:
-        NGINX_VERSION: "1.31.2"
+        NGINX_VERSION: "1.31.3"
     ports:
       # 12222 to stay clear of the usual 8080 suspects (other local stacks)
       - "${DEV_PORT:-12222}:8080"

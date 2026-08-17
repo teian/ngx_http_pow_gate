@@ -12,7 +12,9 @@
 //!   5. decision == verify:<n>   → run verifier; pass if it confirms the bot
 //!   6. valid clearance cookie   → DECLINED
 //!   7. otherwise                → serve the challenge page (200): the JS
-//!      PoW page, or the no-JS meta-refresh page on `challenge:nojs`
+//!      PoW page, or the no-JS meta-refresh page on `challenge:nojs`. A
+//!      data-carrying method (POST, PUT, …) is captured into that page first
+//!      ([`crate::replay`]) so the solver can re-issue it after clearance.
 //!
 //! Decision strings (`challenge[:N|:js|:nojs[:secs]]`, `allow`, `deny`,
 //! `verify:<name>`) are parsed by [`pow_gate_core::decision`].
@@ -30,6 +32,7 @@ use pow_gate_core::Decision;
 use crate::challenge::{route_internal, serve_challenge_page, serve_nojs_page};
 use crate::config::LocationConf;
 use crate::engine::clearance::has_valid_clearance;
+use crate::replay;
 use crate::response::as_str;
 use crate::runtime;
 use crate::verifier::verifier_allows;
@@ -104,6 +107,12 @@ ngx::http_request_handler!(pow_gate_access, |request: &mut Request| {
         let grant = nojs::issue(&cfg.key, return_path, delay, runtime::now());
         let pass_url = format!("{}pass?t={}", cfg.endpoint, grant);
         return serve_nojs_page(request, &location_conf.nojs_page_cache, &pass_url, delay);
+    }
+    // A POST (or any other data-carrying method) would be lost to the reload
+    // after the solve, so capture it into the page first and let the solver
+    // re-issue it — the body read is asynchronous, hence the separate path.
+    if replay::should_capture(request, &cfg) {
+        return replay::capture_then_challenge(request, &location_conf.page_cache);
     }
     serve_challenge_page(request, &location_conf.page_cache)
 });

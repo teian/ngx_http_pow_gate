@@ -106,7 +106,10 @@ docker compose -f docker-compose.test.yml up --build \
 
 Exit code is the client's, so it gates CI. The client asserts: excluded paths are
 never gated, an uncleared request is challenged, `/verify` sets a clearance
-cookie, and a cleared request reaches the upstream.
+cookie, a cleared request reaches the upstream, and a challenged `POST` (and
+`PUT`) comes back inside the challenge page verbatim (`pow_gate_replay`) — with
+`replay off` and an oversized body falling back to the plain page, and
+`client_max_body_size` still rejecting ahead of the gate.
 
 ---
 
@@ -153,6 +156,16 @@ records): pages opt in with `data-record-result` on the solver `<script>` tag.
 The dev sandbox serves a generated copy of the embedded page with that
 attribute added (`scripts/dev.sh` builds `docker/challenge.dev.html`, served
 via `pow_gate_page` — which doubles as live coverage for that directive).
+That page also carries the **POST replay** test — the one part of the flow no
+headless client can exercise, because it runs in `solver.js`. Click *“Drop
+clearance, then POST”*: the sandbox expires the cookie server-side (it is
+HttpOnly), the form submits, the gate answers that POST with the challenge page,
+and after the solve the solver re-issues the submission — you land on
+**POST received** ([docker/www/posted.html](../docker/www/posted.html)) instead
+of losing it. Open the Network tab to confirm the replayed request carries the
+original payload. Without the drop, the same button set just POSTs while cleared
+and goes straight there.
+
 Useful curl checks (also printed by `dev.sh up`):
 
 | Request | Expected |

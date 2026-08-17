@@ -136,7 +136,11 @@ RUN install -d /var/www \
  && printf '{"prefixes":[{"ipv4Prefix":"0.0.0.0/0"},{"ipv6Prefix":"::/0"}]}\n' > /var/www/ranges.json
 # Fake upstream page; carries the "upstream-content" marker the e2e client
 # greps for and renders the solver's sessionStorage("pow-result") stats.
+# posted.html is the dev sandbox's landing page for a POST that got through
+# (nginx.dev.conf maps the static handler's 405 to it) — how a human sees a
+# replayed submission.
 COPY docker/www/index.html /var/www/index.html
+COPY docker/www/posted.html /var/www/posted.html
 # Fails the build if the module is ABI-incompatible or any directive won't parse.
 RUN nginx -t
 
@@ -148,6 +152,7 @@ RUN install -d /var/www \
  && printf 'ok\n' > /var/www/healthz.txt \
  && printf '{"prefixes":[{"ipv4Prefix":"0.0.0.0/0"},{"ipv6Prefix":"::/0"}]}\n' > /var/www/ranges.json
 COPY docker/www/index.html /var/www/index.html
+COPY docker/www/posted.html /var/www/posted.html
 RUN nginx -t
 
 # ───────────────────────────── 4. e2e test client ────────────────────────────

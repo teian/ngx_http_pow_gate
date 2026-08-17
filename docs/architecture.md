@@ -157,6 +157,47 @@ sequenceDiagram
     end
 ```
 
+### A POST that meets an expired clearance
+
+A challenge is served *instead of* the request the client made — which for a
+`GET` costs nothing (the reload re-issues it) but would throw away a form
+submission. So the gate reads the body first and hands the request back inside
+the challenge page; the solver re-issues it once the clearance is minted. No
+server-side buffer, no TTL, no eviction policy: the client keeps its own data.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant A as ACCESS handler
+    participant E as PoW engine
+    participant U as Upstream
+
+    B->>A: POST /order (form body, clearance expired)
+    A->>A: read body (≤ pow_gate_replay_max_body)
+    A-->>B: 200 challenge.html + <script id="pow-replay">{method,url,type,body}
+    B->>E: solve → POST /.pow/verify
+    E-->>B: 204 Set-Cookie: pow_clearance
+    B->>U: POST /order (re-issued by solver.js, same body)
+    U-->>B: the page the submit was meant to produce
+```
+
+Every data-carrying method takes this path, not just `POST` — the deny-list is
+`GET`/`HEAD`/`TRACE`/`CONNECT`, and what decides is whether the request declared
+a body. Bounded by `pow_gate_replay_max_body` (default `1m`, matching nginx's
+`client_max_body_size` default) because the body is buffered before the client
+has proven anything, and skipped for requests that never render the page
+(`Sec-Fetch-Dest` outside `document`/`iframe`/`frame`) or cannot carry a body
+back (`challenge:nojs`). Implementation:
+[`src/replay.rs`](../src/ngx-http-pow-gate/src/replay.rs) +
+[`core/replay.rs`](../src/pow-gate-core/src/replay.rs).
+
+The payload is deliberately **unauthenticated**, unlike the two tokens below: it
+travels only back to the client that sent it, and a client that edits it just
+sends a different request of its own — which it could do anyway, having solved
+the challenge. What is enforced is that it cannot break out of the page (the URL
+is held to an absolute same-site path; `<`, `>` and `&` are escaped in the JSON).
+
 ---
 
 ## The two-token security model
@@ -268,6 +309,7 @@ Implementation: [`src/verifier.rs`](../src/ngx-http-pow-gate/src/verifier.rs).
 | Directives, config, merge       | [`src/config.rs`](../src/ngx-http-pow-gate/src/config.rs)             |
 | The accept/reject decision      | [`src/access.rs`](../src/ngx-http-pow-gate/src/access.rs)             |
 | Challenge page + `/.pow/` routes | [`src/challenge.rs`](../src/ngx-http-pow-gate/src/challenge.rs)        |
+| Captured POST replay            | [`src/replay.rs`](../src/ngx-http-pow-gate/src/replay.rs) + [`core/replay.rs`](../src/pow-gate-core/src/replay.rs) |
 | Good-bot verifier               | [`src/verifier.rs`](../src/ngx-http-pow-gate/src/verifier.rs)         |
 | Clearance cookie                | [`src/engine/clearance.rs`](../src/ngx-http-pow-gate/src/engine/clearance.rs) |
 | Per-request proof               | [`src/pow-gate-core/src/proof.rs`](../src/pow-gate-core/src/proof.rs) |

@@ -35,6 +35,12 @@ pub struct Cfg {
     /// Require a valid per-request proof on non-navigation requests (cookie alone
     /// is accepted only for top-level navigations, which cannot send a header).
     pub require_proof: bool,
+    /// Capture a challenged non-GET body into the challenge page so the solver
+    /// can re-issue the request after clearance (`pow_gate_replay`).
+    pub replay: bool,
+    /// Largest body captured for that replay; anything above is not read at all
+    /// (`pow_gate_replay_max_body`).
+    pub replay_max_body: usize,
     pub endpoint: String,
     pub cookie: CookieConfig,
 }
@@ -86,6 +92,8 @@ pub fn resolve(lc: &LocationConf) -> Cfg {
             clearance_ttl: lc.clearance_ttl as i64,
             proof_skew: lc.proof_skew as i64,
             require_proof: lc.require_proof != 0,
+            replay: lc.replay != 0,
+            replay_max_body: lc.replay_max_body,
             endpoint: as_str(&lc.endpoint).to_string(),
             cookie: CookieConfig {
                 name: nonempty(as_str(&lc.cookie_name), "pow_clearance"),
@@ -225,6 +233,18 @@ pub unsafe fn method_and_path(r: *mut ngx_http_request_t) -> (String, String) {
     let method = as_str(&(*r).method_name).to_string();
     let path = as_str(&(*r).uri).to_string();
     (method, path)
+}
+
+/// The declared request-body length, or `None` when there is none or nginx does
+/// not know it yet (`Transfer-Encoding: chunked` → `content_length_n == -1`).
+///
+/// # Safety
+/// `r` must be live.
+pub unsafe fn content_length(r: *mut ngx_http_request_t) -> Option<usize> {
+    match (*r).headers_in.content_length_n {
+        n if n > 0 => Some(n as usize),
+        _ => None,
+    }
 }
 
 /// Collect the client request body into a `Vec`, reconstructed in order from the

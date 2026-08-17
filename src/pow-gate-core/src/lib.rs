@@ -23,7 +23,9 @@ pub mod nojs;
 pub mod pow;
 pub mod proof;
 pub mod ranges;
+pub mod replay;
 pub mod target;
+pub mod uri;
 
 pub use clearance::Clearance;
 pub use decision::Decision;

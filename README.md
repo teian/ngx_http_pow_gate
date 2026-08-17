@@ -110,8 +110,16 @@ flowchart TD
     ver -- no --> clr{valid clearance?<br/>cookie HMAC + per-request proof}
 
     clr -- yes --> pass5[/NGX_DECLINED → upstream/]
-    clr -- no --> serve[/200 challenge page/]
+    clr -- no --> post{"body to keep?<br/>POST/PUT/… + pow_gate_replay"}
+    post -- yes --> capture[/"200 challenge page<br/>+ the captured request"/]
+    post -- no --> serve[/200 challenge page/]
 ```
+
+A challenged `POST` would otherwise be lost: the gate answers the submit with
+the challenge page, and the reload afterwards is a `GET`. So the module reads
+the body and hands the request back inside that page, where the solver re-issues
+it once the clearance is minted — stateless, nothing buffered server-side. See
+[`pow_gate_replay`](docs/configuration.md#pow_gate_replay-on--off).
 
 ---
 
@@ -221,6 +229,8 @@ Every directive at a glance. Full reference (contexts, defaults, edge cases) in
 | `pow_gate_proof_skew`      | http, server, location    | `<time>`       | Per-request proof validity window (e.g. `5s`)      |
 | `pow_gate_require_proof`   | http, server, location    | `on`\|`off`    | Demand `X-Pow-Proof` on fetch/XHR (default `off`)  |
 | `pow_gate_endpoint`        | http, server, location    | `<prefix>`     | Internal route prefix (default `/.pow/`)           |
+| `pow_gate_replay`          | http, server, location    | `on`\|`off`    | Keep a challenged `POST` (any data-carrying method) alive across the challenge (default `on`) |
+| `pow_gate_replay_max_body` | http, server, location    | `<size>`       | Largest body captured for that replay (default `1m`, matching `client_max_body_size`) |
 | `pow_gate_cookie_name`     | http, server, location    | `<name>`       | Clearance cookie name (default `pow_clearance`)    |
 | `pow_gate_cookie_domain`   | http, server, location    | `<domain>`     | Cookie `Domain=` (default host-only)               |
 | `pow_gate_cookie_path`     | http, server, location    | `<path>`       | Cookie `Path=` (default `/`)                       |
@@ -262,11 +272,12 @@ ngx_pow/
 │   │       ├── config.rs          directives, MainConf/LocationConf, create + merge
 │   │       ├── access.rs          ACCESS-phase handler — allow/deny/challenge decision
 │   │       ├── challenge.rs       challenge-page + internal /.pow/ endpoints
+│   │       ├── replay.rs          capture a challenged POST so it survives
 │   │       ├── verifier.rs        pow_gate_verifier {} — good-bot allowlist
 │   │       └── engine/            thin nginx shell over the core (FFI seam)
 │   └── pow-gate-core/             the engine — NO nginx dep, unit-tested
 │       ├── Cargo.toml
-│       ├── src/     target · codec · mac · pow · clearance · proof
+│       ├── src/     target · codec · mac · pow · clearance · proof · replay
 │       ├── tests/   one test crate per concern (their own projects)
 │       └── benches/ Criterion microbenchmarks (engine hot path)
 ├── tests/integration/            black-box e2e client (standalone project)
@@ -364,12 +375,18 @@ a claim. There is no scaffold left.
 | Response I/O — challenge page, JSON, `Set-Cookie`, `204` | written via the `ngx` output chain |
 | Clearance cookie + per-request proof validation | cookie + `X-Pow-Proof` checked against the cookie-bound key |
 | Full handshake: challenge → solve → verify → cleared | e2e stage green |
+| **Challenged `POST` survives** — body captured into the page, re-issued by the solver | e2e: the payload comes back verbatim; `off` / oversized bodies fall back |
 | **Good-bot verifier** — `pow_gate_verifier {}` block, IP-range feed fetch + refresh, CIDR match, FCrDNS, client-IP parse | **e2e: a `verify:<name>` UA is allowed via the live IP-range feed** |
 
 ### Known limitations
 
-- A `POST /verify` body larger than the client-body buffer (spilled to a temp
-  file) isn't read — solver submissions are tiny, so this isn't hit in practice.
+- A challenged request is only replayed when the challenge page can run: a
+  `fetch`/XHR call gets the HTML page as its answer and must re-solve itself,
+  and the `challenge:nojs` tier cannot carry a body back at all. Bodies over
+  `pow_gate_replay_max_body` (default `1m`, matching nginx's
+  `client_max_body_size` default) or without a declared length (chunked) are not
+  captured either — those requests are still challenged, they just lose their
+  body as they did before.
 - FCrDNS resolves on a background thread and caches verdicts; the very first
   request for a new IP falls through to a challenge while DNS is in flight
   (fail-closed). The IP-range path has no such delay.

@@ -12,6 +12,7 @@
 //!   ├── config.rs     directives, MainConf / LocationConf, create + merge
 //!   ├── access.rs     ACCESS-phase handler: the allow / deny / challenge decision
 //!   ├── challenge.rs  challenge-page rendering + the internal /.pow/ endpoints
+//!   ├── replay.rs     capture a challenged POST so it survives the challenge
 //!   ├── verifier.rs   `pow_gate_verifier {}` block: verified good-bot allowlist
 //!   └── engine/       the PoW crypto (clearance cookie, per-request proof, hashing)
 //! ```
@@ -27,6 +28,7 @@ mod access;
 mod challenge;
 mod config;
 mod engine;
+mod replay;
 mod response;
 mod runtime;
 mod verifier;

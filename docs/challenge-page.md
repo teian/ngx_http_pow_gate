@@ -93,6 +93,25 @@ Use them so the page tracks your configuration automatically:
 You normally only need them on the script tag (below). They are substituted once
 at config-load time, when the page is cached.
 
+### The one per-request insertion: the captured request
+
+When the challenged request carried data — a form `POST` that ran into an
+expired clearance, or any other method that can carry a body — the module
+injects one block immediately before the page's last `</body>`:
+
+```html
+<script id="pow-replay" type="application/json">
+{"method":"POST","url":"/order","type":"application/x-www-form-urlencoded","body":"<base64url>"}
+</script>
+```
+
+The solver re-issues that request once the clearance is set, so the submission
+is not lost (see [`pow_gate_replay`](configuration.md#pow_gate_replay-on--off)).
+Nothing to add to your page — just keep a `</body>` in it; without one the block
+is appended at the end, which still works but is worth avoiding. The block is
+inert data (`type="application/json"`, never executed), and pages carrying one
+are served `Cache-Control: no-store`.
+
 ---
 
 ## The solver script tag

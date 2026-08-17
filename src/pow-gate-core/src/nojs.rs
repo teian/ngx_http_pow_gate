@@ -50,15 +50,9 @@ fn mac_input(payload_b64: &str) -> Vec<u8> {
     v
 }
 
-/// A safe same-site redirect path: absolute-path form, not protocol-relative,
-/// and free of anything that could smuggle bytes into a `Location` header or
-/// an HTML attribute (controls, whitespace, quotes, angle brackets).
+/// A safe same-site redirect path — see [`crate::uri::same_site_path`].
 fn path_ok(path: &str) -> bool {
-    path.starts_with('/')
-        && !path.starts_with("//")
-        && path
-            .bytes()
-            .all(|b| (0x21..0x7f).contains(&b) && !matches!(b, b'"' | b'<' | b'>' | b'\\'))
+    crate::uri::same_site_path(path)
 }
 
 /// Mint a grant for `path` with a `delay`-second minimum wait. An unsafe path

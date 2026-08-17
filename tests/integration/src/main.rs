@@ -22,6 +22,9 @@
 //!       → upstream (they cannot carry the proof header)
 //!   6f. /default-proof (require_proof unset ⇒ default off): fetch/XHR on the
 //!       cookie alone → upstream
+//!   11. a challenged POST (and PUT, and any other data-carrying method) comes
+//!       back inside the challenge page (pow_gate_replay) so the solver can
+//!       re-issue it; replay off / oversized / over client_max_body_size fall back
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
 use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
@@ -405,7 +408,126 @@ fn main() {
     }
     println!("✓ nojs clearance cookie reached upstream");
 
+    // 11. POST replay — a challenged form submit must come back inside the
+    //     challenge page so the solver can re-issue it (pow_gate_replay).
+    let form_path = "/submit?next=%2Fthanks";
+    let form_body = "qty=2&note=hello+world";
+    let challenged = post_form(&format!("{base}{form_path}"), form_body, &[]);
+    if challenged.status != 200 {
+        fail(format!("challenged POST expected the 200 page, got {}", challenged.status));
+    }
+    if challenged.cache_control != "no-store" {
+        fail(format!("captured page must be no-store, got {:?}", challenged.cache_control));
+    }
+    let captured = extract_replay(&challenged.body)
+        .unwrap_or_else(|| fail("challenged POST carried no pow-replay payload"));
+    if captured["method"] != "POST" || captured["url"] != form_path {
+        fail(format!("replay payload targets the wrong request: {captured}"));
+    }
+    if captured["type"] != "application/x-www-form-urlencoded" {
+        fail(format!("replay payload lost the content type: {captured}"));
+    }
+    let replay_body = B64
+        .decode(captured["body"].as_str().unwrap_or_default())
+        .unwrap_or_else(|e| fail(format!("replay body is not base64url: {e}")));
+    if replay_body != form_body.as_bytes() {
+        fail(format!("replay body {:?} != {form_body:?}", String::from_utf8_lossy(&replay_body)));
+    }
+    println!("✓ challenged POST captured into the challenge page verbatim");
+
+    // 11a. every data-carrying method, not just POST: a PUT is captured the
+    //      same way, with the method echoed verbatim.
+    let put = send_body("PUT", &format!("{base}/item/7"), "qty=9", &[]);
+    let put_captured = extract_replay(&put.body)
+        .unwrap_or_else(|| fail("challenged PUT carried no pow-replay payload"));
+    if put_captured["method"] != "PUT" || put_captured["url"] != "/item/7" {
+        fail(format!("PUT replay payload is wrong: {put_captured}"));
+    }
+    println!("✓ challenged PUT captured too (method echoed verbatim)");
+
+    // 11b. `pow_gate_replay off` → the plain page, request lost (as before).
+    let off = post_form(&format!("{base}/replay-off"), form_body, &[]);
+    if extract_replay(&off.body).is_some() {
+        fail("pow_gate_replay off still captured the request");
+    }
+    // 11c. a body over pow_gate_replay_max_body is never read.
+    let big = format!("blob={}", "x".repeat(1024));
+    let over = post_form(&format!("{base}/replay-small"), &big, &[]);
+    if extract_replay(&over.body).is_some() {
+        fail("a body over pow_gate_replay_max_body was captured anyway");
+    }
+    println!("✓ replay off / oversized body fall back to the plain page");
+
+    // 11d. client_max_body_size wins, and it wins BEFORE the gate: nginx
+    //      rejects an over-limit body in the FIND_CONFIG phase, which runs
+    //      ahead of ACCESS. So a pow_gate_replay_max_body above it changes
+    //      nothing — such a request is 413'd exactly as it would be with the
+    //      gate switched off, and never reaches the capture at all.
+    let refused = post_form(&format!("{base}/replay-over-limit"), &big, &[]);
+    if refused.status != 413 {
+        fail(format!("over client_max_body_size expected nginx's 413, got {}", refused.status));
+    }
+    println!("✓ client_max_body_size still rejects before the gate ever runs (413)");
+
+    // 11e. with the clearance the POST is no longer gated: it reaches the
+    //      CONTENT phase, where the static module answers 405 (it serves files,
+    //      not submissions) — proof the gate declined rather than challenged.
+    let cleared_post = post_form(&format!("{base}{form_path}"), form_body, &[("Cookie", &cookie)]);
+    if cleared_post.status != 405 {
+        fail(format!("cleared POST expected 405 from upstream, got {}", cleared_post.status));
+    }
+    if extract_replay(&cleared_post.body).is_some() {
+        fail("cleared POST was challenged instead of passed through");
+    }
+    println!("✓ cleared POST passed the gate (405 from the static upstream)");
+
     println!("\nE2E PASS");
+}
+
+/// A form POST that never follows redirects, with the browser navigation
+/// markers a real form submit carries.
+struct Posted {
+    status: u16,
+    cache_control: String,
+    body: String,
+}
+
+fn post_form(url: &str, body: &str, headers: &[(&str, &str)]) -> Posted {
+    send_body("POST", url, body, headers)
+}
+
+/// Same, for any other data-carrying method (`PUT`, `PATCH`, …).
+fn send_body(method: &str, url: &str, body: &str, headers: &[(&str, &str)]) -> Posted {
+    let agent = ureq::builder().redirects(0).build();
+    let mut req = agent
+        .request(method, url)
+        .set("User-Agent", "e2e-client")
+        .set("Content-Type", "application/x-www-form-urlencoded")
+        .set("Sec-Fetch-Dest", "document")
+        .set("Sec-Fetch-Mode", "navigate");
+    for (k, v) in headers {
+        req = req.set(k, v);
+    }
+    let res = match req.send_string(body) {
+        Ok(r) => r,
+        Err(ureq::Error::Status(_, r)) => r,
+        Err(e) => fail(format!("POST {url} failed: {e}")),
+    };
+    Posted {
+        status: res.status(),
+        cache_control: res.header("cache-control").unwrap_or_default().to_string(),
+        body: res.into_string().unwrap_or_default(),
+    }
+}
+
+/// Pull the injected `<script id="pow-replay" …>` payload out of a page. Takes
+/// the LAST match: the page's own customization comment mentions the tag too,
+/// while the real one is injected just before `</body>`.
+fn extract_replay(page: &str) -> Option<serde_json::Value> {
+    let i = page.rfind("id=\"pow-replay\"")?;
+    let start = page[i..].find('>')? + i + 1;
+    let end = page[start..].find("</script>")? + start;
+    serde_json::from_str(&page[start..end]).ok()
 }
 
 /// Pull the pass URL out of the nojs page (`content="2;url=<here>"`).

@@ -33,6 +33,7 @@ use crate::verifier::pow_gate_verifier_block;
 // this level; otherwise it inherits `prev`, falling back to `default` when the
 // parent is unset too.
 const UNSET_UINT: ngx_uint_t = ngx_uint_t::MAX;
+const UNSET_SIZE: usize = usize::MAX; // NGX_CONF_UNSET_SIZE
 
 #[inline]
 unsafe fn merge_flag(conf: &mut ngx_flag_t, prev: ngx_flag_t, default: ngx_flag_t) {
@@ -44,6 +45,12 @@ unsafe fn merge_flag(conf: &mut ngx_flag_t, prev: ngx_flag_t, default: ngx_flag_
 unsafe fn merge_uint(conf: &mut ngx_uint_t, prev: ngx_uint_t, default: ngx_uint_t) {
     if *conf == UNSET_UINT {
         *conf = if prev == UNSET_UINT { default } else { prev };
+    }
+}
+#[inline]
+unsafe fn merge_size(conf: &mut usize, prev: usize, default: usize) {
+    if *conf == UNSET_SIZE {
+        *conf = if prev == UNSET_SIZE { default } else { prev };
     }
 }
 #[inline]
@@ -104,6 +111,10 @@ pub struct LocationConf {
     pub require_proof: ngx_flag_t, // pow_gate_require_proof on|off (fetch/XHR)
     pub endpoint: ngx_str_t,      // pow_gate_endpoint <prefix>
 
+    // ── captured-request replay (a POST must survive the challenge) ──
+    pub replay: ngx_flag_t,       // pow_gate_replay on|off
+    pub replay_max_body: usize,   // pow_gate_replay_max_body <size>
+
     // ── clearance-cookie attributes (pow_gate_cookie_*) ──
     // Empty str / NGX_CONF_UNSET flag ⇒ merge applies the documented default.
     pub cookie_name: ngx_str_t,      // default: pow_clearance
@@ -132,7 +143,7 @@ const SERVER_LOCATION: ngx_uint_t = (NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF) as n
 // ───────────────────────────── command table ─────────────────────────────────
 
 #[no_mangle]
-pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 19] = [
+pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 21] = [
     // pow_gate on|off;
     ngx_command_t {
         name: ngx_string!("pow_gate"),
@@ -234,6 +245,28 @@ pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 19] = [
         set: Some(ngx_conf_set_str_slot),
         conf: NGX_HTTP_LOC_CONF_OFFSET,
         offset: offset_of!(LocationConf, endpoint),
+        post: ptr::null_mut(),
+    },
+    // pow_gate_replay on|off;  (capture a challenged POST/PUT/PATCH/DELETE body
+    // into the challenge page so the solver can re-issue the request after the
+    // clearance is minted, instead of losing it to the reload.)
+    ngx_command_t {
+        name: ngx_string!("pow_gate_replay"),
+        type_: HTTP_SERVER_LOCATION | NGX_CONF_FLAG as ngx_uint_t,
+        set: Some(ngx_conf_set_flag_slot),
+        conf: NGX_HTTP_LOC_CONF_OFFSET,
+        offset: offset_of!(LocationConf, replay),
+        post: ptr::null_mut(),
+    },
+    // pow_gate_replay_max_body <size>;  (bodies above this — or above
+    // client_max_body_size — are NOT read: the client gets the plain challenge
+    // page and the request is lost, as it was before replay existed.)
+    ngx_command_t {
+        name: ngx_string!("pow_gate_replay_max_body"),
+        type_: HTTP_SERVER_LOCATION | NGX_CONF_TAKE1 as ngx_uint_t,
+        set: Some(ngx_conf_set_size_slot),
+        conf: NGX_HTTP_LOC_CONF_OFFSET,
+        offset: offset_of!(LocationConf, replay_max_body),
         post: ptr::null_mut(),
     },
     // ── clearance-cookie attributes ──
@@ -339,6 +372,8 @@ pub extern "C" fn create_location_conf(cf: *mut ngx_conf_t) -> *mut c_void {
         (*p).clearance_ttl = NGX_CONF_UNSET as time_t;
         (*p).proof_skew = NGX_CONF_UNSET as time_t;
         (*p).require_proof = NGX_CONF_UNSET as ngx_flag_t;
+        (*p).replay = NGX_CONF_UNSET as ngx_flag_t;
+        (*p).replay_max_body = UNSET_SIZE;
         (*p).cookie_secure = NGX_CONF_UNSET as ngx_flag_t;
         (*p).cookie_httponly = NGX_CONF_UNSET as ngx_flag_t;
         // str fields (page_path, hmac_key_file, endpoint, cookie_*) stay zeroed;
@@ -371,6 +406,10 @@ pub extern "C" fn merge_location_conf(
         merge_sec(&mut conf.proof_skew, prev.proof_skew, 5);
         merge_flag(&mut conf.require_proof, prev.require_proof, 0 /* off */);
         merge_str(&mut conf.endpoint, &prev.endpoint, b"/.pow/");
+        merge_flag(&mut conf.replay, prev.replay, 1 /* on */);
+        // Default tracks nginx's own client_max_body_size default (1m): a body
+        // the server would accept is a body worth keeping across a challenge.
+        merge_size(&mut conf.replay_max_body, prev.replay_max_body, 1024 * 1024);
 
         merge_str(&mut conf.cookie_name, &prev.cookie_name, b"pow_clearance");
         merge_str(&mut conf.cookie_domain, &prev.cookie_domain, b"");

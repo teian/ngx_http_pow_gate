@@ -31,6 +31,8 @@ gate.
 | `pow_gate_proof_skew`      | http, server, location    | `<time>`     | `5s`        | `LocationConf.proof_skew`       |
 | `pow_gate_require_proof`   | http, server, location    | `on`\|`off`  | `off`       | `LocationConf.require_proof`    |
 | `pow_gate_endpoint`        | http, server, location    | `<prefix>`   | `/.pow/`    | `LocationConf.endpoint`         |
+| `pow_gate_replay`          | http, server, location    | `on`\|`off`  | `on`        | `LocationConf.replay`           |
+| `pow_gate_replay_max_body` | http, server, location    | `<size>`     | `1m`        | `LocationConf.replay_max_body`  |
 | `pow_gate_cookie_name`     | http, server, location    | `<name>`     | `pow_clearance` | `LocationConf.cookie_name`  |
 | `pow_gate_cookie_domain`   | http, server, location    | `<domain>`   | host-only   | `LocationConf.cookie_domain`    |
 | `pow_gate_cookie_path`     | http, server, location    | `<path>`     | `/`         | `LocationConf.cookie_path`      |
@@ -287,6 +289,81 @@ The URL prefix for the three internal routes the module serves
 (`challenge`, `solver.js`, `verify`). Change it if `/.pow/` collides with your
 app. Must start and end with `/`. The same value is injected into the page as
 `{{endpoint}}`.
+
+### `pow_gate_replay on | off;`
+
+> Context: `http`, `server`, `location` · Default: `on`
+
+Keep a challenged **request that carried data** alive across the challenge
+instead of losing it — `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, WebDAV's
+`PROPFIND`/`PROPPATCH`/`LOCK`/`MKCOL`, or whatever else your API speaks. The
+rule is a deny-list, not a verb table: everything is replayable except `GET` and
+`HEAD` (nothing to keep — the reload re-issues them), `TRACE` (must not carry a
+body) and `CONNECT` (not a request-response exchange). What decides is whether
+the request actually declared a body, and the method is echoed back **verbatim**
+— HTTP methods are case-sensitive.
+
+A clearance expires while a page is open; the user submits the form; the gate
+answers that `POST` with the challenge page. Once the solve finishes there is
+nothing left to submit — reloading re-issues a `GET`, or makes the browser ask
+the user to confirm a resubmission. With `pow_gate_replay on` the module reads
+the body first and embeds the whole request in the challenge page it is already
+sending back to that same client:
+
+```html
+<script id="pow-replay" type="application/json">
+{"method":"POST","url":"/order","type":"application/x-www-form-urlencoded","body":"<base64url>"}
+</script>
+```
+
+`solver.js` re-issues it the moment the clearance cookie is set — as a real
+form submit for `application/x-www-form-urlencoded` bodies (so redirects,
+history and rendering keep their native semantics), through `fetch` otherwise.
+The gate stays stateless: nothing is stored server-side, because the client
+already has the data. The page carrying it is sent `Cache-Control: no-store`.
+
+Not captured (the request is lost exactly as it was before this existed — the
+client is still challenged and still gets through):
+
+- bodies over [`pow_gate_replay_max_body`](#pow_gate_replay_max_body-size), and
+  bodies with no declared length (`Transfer-Encoding: chunked`) — reading those
+  blind is exactly what the budget exists to prevent. (A body over
+  `client_max_body_size` never gets this far: nginx `413`s it before the gate
+  runs.);
+- requests the browser marks as ones that will not render the page —
+  `Sec-Fetch-Dest` other than `document`, `iframe` or `frame`. A `fetch`/XHR
+  call gets the challenge page as inert bytes, so there is nothing to replay
+  from; API clients must handle a re-solve themselves. A client that sends no
+  `Sec-Fetch-*` metadata at all *is* captured (it may be an older browser);
+- the `challenge:nojs` tier — a meta-refresh cannot carry a body, and without
+  JavaScript nothing can re-issue the request.
+
+Set `off` to restore the old behaviour (and never read an un-cleared client's
+body), e.g. on an upload location.
+
+### `pow_gate_replay_max_body <size>;`
+
+> Context: `http`, `server`, `location` · Default: `1m`
+
+The largest request body captured for a replay. This is a real budget, not a
+formality: the body is read into the worker *before* the client has proven
+anything, so it bounds what an un-cleared client can make nginx buffer. A
+declared `Content-Length` above it means the body is never read at all.
+
+The default deliberately matches nginx's own `client_max_body_size` default
+(`1m`): a body the server would have accepted is a body worth keeping across a
+challenge.
+
+`client_max_body_size` still wins, and it wins *first* — nginx rejects an
+over-limit declared body with `413` in the FIND_CONFIG phase, which runs before
+ACCESS, so such a request never reaches the gate at all (that is nginx's
+behaviour with the gate off, too). Setting this directive higher than
+`client_max_body_size` therefore does nothing useful, but breaks nothing either;
+setting it *lower* is the meaningful direction, when you want a tighter buffer
+budget for un-cleared clients than the body limit you otherwise accept.
+
+On file-upload locations prefer `pow_gate_replay off;` over reasoning about
+sizes at all.
 
 ---
 

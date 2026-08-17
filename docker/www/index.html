@@ -50,6 +50,14 @@
     padding:1.5px 5px;word-break:break-all;line-height:1.8;}
   code.hash b{color:var(--ok);font-weight:700;}
   .muted{font-size:13px;color:var(--fg-3);}
+  form{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
+  input[type=text]{flex:1 1 220px;font:inherit;font-size:14px;padding:7px 10px;
+    color:var(--fg-1);background:var(--slot-bg);
+    border:1px solid var(--slot-bd);border-radius:6px;}
+  button{font:inherit;font-size:14px;padding:7px 14px;border-radius:6px;cursor:pointer;
+    color:var(--fg-1);background:var(--card);border:1px solid var(--border);}
+  button.primary{color:#fff;background:var(--accent);border-color:var(--accent);}
+  button:hover{border-color:var(--accent);}
 </style>
 </head>
 <body>
@@ -81,6 +89,22 @@
       <tr><td>Winning hash <span class="muted">SHA-256(salt+nonce)</span></td>
           <td><code class="hash" id="st-hash">—</code></td></tr>
     </table>
+  </div>
+
+  <div class="card">
+    <h2>POST replay (pow_gate_replay)</h2>
+    <p class="muted">
+      A submission must survive an expired clearance. “Drop clearance, then
+      POST” expires the cookie (it is HttpOnly, so this page asks nginx to do
+      it) and submits — you should get the challenge page, watch it solve, and
+      land on <strong>POST received</strong> with this form's data intact. Check
+      the Network tab: the replayed request carries the same payload.
+    </p>
+    <form id="replay-form" method="post" action="/">
+      <input type="text" name="note" value="hello from the sandbox" aria-label="note">
+      <button type="submit">POST as-is</button>
+      <button type="button" class="primary" id="replay-drop">Drop clearance, then POST</button>
+    </form>
   </div>
 </main>
 
@@ -123,6 +147,23 @@
         el.appendChild(document.createTextNode(hex.slice(zeros.length)));
       });
     }
+  })();
+</script>
+
+<!-- POST replay test: expire the clearance server-side (the cookie is
+     HttpOnly), then submit — so the POST is the request that meets the gate
+     uncleared. Dev sandbox only; /_drop-clearance lives in nginx.dev.conf. -->
+<script>
+  (function(){
+    var form = document.getElementById('replay-form');
+    var drop = document.getElementById('replay-drop');
+    if (!form || !drop) return;
+    drop.addEventListener('click', function(){
+      drop.disabled = true;
+      fetch('/_drop-clearance', { credentials: 'same-origin', cache: 'no-store' })
+        .catch(function(){ /* submit anyway — worst case you stay cleared */ })
+        .then(function(){ HTMLFormElement.prototype.submit.call(form); });
+    });
   })();
 </script>
 </body>

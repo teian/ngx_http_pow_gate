@@ -8,6 +8,7 @@ replacing the solver, or debugging the handshake.
 - [`GET {endpoint}challenge`](#get-endpointchallenge)
 - [`GET {endpoint}solver.js`](#get-endpointsolverjs)
 - [`POST {endpoint}verify`](#post-endpointverify)
+- [The captured request (`pow-replay`)](#the-captured-request-pow-replay)
 - [Token formats](#token-formats)
 - [The per-request proof](#the-per-request-proof)
 - [Full message sequence](#full-message-sequence)
@@ -153,6 +154,49 @@ requests would be challenged (moot for text browsers). Handlers:
 
 ---
 
+## The captured request (`pow-replay`)
+
+Not an endpoint — a block the module injects into the challenge page when the
+challenged request carried a body (`pow_gate_replay`, default on). It is how a
+form `POST` survives a challenge: the request comes back to the client that
+sent it, and the solver re-issues it after `/verify` succeeds.
+
+Injected immediately before the page's closing `</body>`:
+
+```html
+<script id="pow-replay" type="application/json">
+{"method":"POST","url":"/order?ref=mail","type":"application/x-www-form-urlencoded","body":"cXR5PTI"}
+</script>
+```
+
+| Field    | Type   | Meaning                                                        |
+| -------- | ------ | -------------------------------------------------------------- |
+| `method` | string | The original method, verbatim (case-sensitive). Any data-carrying verb — `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, `PROPFIND`, … — but never `GET`/`HEAD`/`TRACE`/`CONNECT` |
+| `url`    | string | The original request target, verbatim: an absolute same-site path with its query string, still percent-encoded |
+| `type`   | string | The original `Content-Type` (may be empty)                      |
+| `body`   | string | The original body, base64url, no padding                        |
+
+Response headers: `Cache-Control: no-store` — the page carries request data.
+
+Client contract (`assets/solver.js`):
+
+1. after the clearance cookie is set, read the block; absent → plain
+   `location.reload()`, nothing was captured;
+2. `application/x-www-form-urlencoded` + `POST` → rebuild a hidden `<form>` and
+   submit it, so the browser owns redirects, history and rendering exactly as it
+   would have for the original submit;
+3. anything else → `fetch` the raw bytes back with the original `Content-Type`,
+   then follow `res.redirected` or write the returned document out.
+
+`<`, `>` and `&` are emitted as `\uXXXX` escapes, so the JSON can never close
+its own `<script>` block; `url` is rejected unless it is an absolute same-site
+path free of quotes, angle brackets and control bytes. The payload is **not**
+signed — it never leaves the client that produced it, and a client that edits it
+merely sends a different request of its own, which a cleared client may do
+anyway. See [`core/replay.rs`](../src/pow-gate-core/src/replay.rs).
+
+---
+
 ## Token formats
 
 ### Clearance cookie (default name `pow_clearance`, set via `pow_gate_cookie_name`)
@@ -247,6 +291,7 @@ sequenceDiagram
 | `/verify` solution wrong/expired       | `400`    | Show `#pow-error`, restart from challenge |
 | Clearance cookie HMAC fails            | (no pass)| Re-challenged on the next request         |
 | Clearance expired                      | (no pass)| Re-challenged; solver runs again          |
+| Clearance expired on a `POST`          | page + `pow-replay` | Solver re-issues the request after clearing |
 | Proof missing / stale / bad signature  | (no pass)| Re-challenged                             |
 | `deny` decision                        | `403`    | No challenge; hard stop                   |
 | JS disabled                            | page only| Cannot complete — use `allow`/exclusions  |

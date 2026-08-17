@@ -18,7 +18,9 @@
  *      OPT-IN via data-record-result / window.__POW_RECORD_RESULT__, off by
  *      default; lets a landing page display nonce/hash/solve time (the dev
  *      sandbox result page does)
- *   6. location.reload() into the now-cleared origin
+ *   6. re-issue the captured request if the page carries one (see "captured
+ *      request" below — this is what keeps a challenged POST alive), else
+ *      location.reload() into the now-cleared origin
  *
  * Worker trick: this same file doubles as the worker script (new Worker(SRC)).
  * A worker has no `document`, takes the branch right below the shared helpers,
@@ -280,6 +282,82 @@
     };
   }
 
+  // ─────────────────────── captured request (replay) ──────────────────────────
+  // A POST — or any other request that carried data — would be lost to the
+  // reload below, so the module captures it into this page (pow_gate_replay) as
+  //   <script id="pow-replay" type="application/json">
+  //   {"method":"POST","url":"/order","type":"<content-type>","body":"<base64url>"}
+  // and we re-issue it here, once the clearance cookie is set. Absent tag →
+  // nothing was captured (a GET, replay off, body too large) → plain reload.
+  function readReplay() {
+    var n = document.getElementById("pow-replay");
+    if (!n) return null;
+    try {
+      var rq = JSON.parse(n.textContent);
+      return rq && rq.method && rq.url ? rq : null;
+    } catch (e) { return null; }
+  }
+
+  function unb64url(s) {
+    s = String(s || "").replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4) s += "=";
+    var bin = atob(s), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  // Form-encoded bodies go back as a real form submit: the browser then owns
+  // redirects, history, rendering and downloads exactly as it would have for
+  // the original submit. Re-encoding is byte-identical for UTF-8 forms, which
+  // is all a browser produces.
+  function replayAsForm(rq, bytes) {
+    var f = document.createElement("form");
+    f.setAttribute("method", "post");
+    f.setAttribute("action", rq.url);
+    f.setAttribute("enctype", "application/x-www-form-urlencoded");
+    f.setAttribute("accept-charset", "utf-8");
+    f.style.display = "none";
+    new URLSearchParams(new TextDecoder().decode(bytes)).forEach(function (v, k) {
+      var i = document.createElement("input");
+      i.setAttribute("type", "hidden");
+      i.setAttribute("name", k);
+      i.setAttribute("value", v);
+      f.appendChild(i);
+    });
+    document.body.appendChild(f);
+    // A field named "submit" would shadow the form's own method, so call the
+    // prototype's.
+    HTMLFormElement.prototype.submit.call(f);
+  }
+
+  // Everything else (multipart uploads, JSON, and every method a form cannot
+  // express — PUT, PATCH, DELETE, PROPFIND, …) goes back
+  // byte-for-byte through fetch — which also carries the per-request proof,
+  // since installProofFetch() has wrapped it by now. The address bar already
+  // shows the original URL (this page WAS the answer to that request), so
+  // writing the response document out lands the user where they expected.
+  async function replayAsFetch(rq, bytes) {
+    var res = await fetch(rq.url, {
+      method: rq.method,
+      headers: rq.type ? { "Content-Type": rq.type } : {},
+      body: bytes.length ? bytes : undefined,
+      credentials: "same-origin",
+    });
+    if (res.redirected && res.url) { location.replace(res.url); return; }
+    var text = await res.text();
+    var html = /html/i.test(res.headers.get("Content-Type") || "")
+      ? text
+      : "<pre>" + text.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</pre>";
+    document.open(); document.write(html); document.close();
+  }
+
+  async function replay(rq) {
+    var bytes = unb64url(rq.body);
+    var form = /^application\/x-www-form-urlencoded\b/i.test(rq.type || "");
+    if (form && rq.method.toUpperCase() === "POST") return replayAsForm(rq, bytes);
+    return replayAsFetch(rq, bytes);
+  }
+
   // ───────────────────────────────── main ─────────────────────────────────────
   // Solve+verify attempt. The challenge token is only valid for a short grace
   // window (server-side, ~2 min): a slow device or a background tab can run
@@ -343,6 +421,16 @@
       installProofFetch(kp.privateKey);
       status(tr("done", "Done"));
       percent(100);
+
+      // Re-issue the captured request if there was one; a failure there must
+      // still land the (now cleared) client on the page, so fall back to the
+      // reload rather than into the error box.
+      var rq = readReplay();
+      if (rq) {
+        status(tr("resending", "Resending your request…"));
+        try { await replay(rq); return; }
+        catch (e) { console.error("[pow] replay", e); }
+      }
       location.reload();
     } catch (e) {
       console.error("[pow]", e);

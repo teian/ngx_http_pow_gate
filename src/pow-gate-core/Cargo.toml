@@ -1,6 +1,6 @@
 [package]
 name = "pow-gate-core"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Pure-Rust proof-of-work gate engine: PoW, clearance tokens, per-request proofs"

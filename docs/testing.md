@@ -220,7 +220,7 @@ CI is split across a few workflows:
 | e2e          | the live request flow works end to end against real nginx (per libc) | Docker  |
 
 > Status (verified): **all four layers are green, nothing left as scaffold.** The
-> engine is unit-tested, the module compiles against nginx 1.31.3, loads
+> engine is unit-tested, the module compiles against nginx 1.31.4, loads
 > (`nginx -t`), and passes the full live handshake — an uncleared request is
 > challenged, the client solves the PoW with `pow-gate-core`, `POST /verify`
 > returns a clearance cookie, and a cleared request (cookie + `X-Pow-Proof`)

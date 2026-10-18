@@ -21,7 +21,7 @@
 //!
 //! and `solver.js` re-issues the request once the clearance cookie is set (as a
 //! real form submit for form-encoded bodies, so redirects and rendering keep
-//! their native semantics; via `fetch` otherwise). The gate stays stateless.
+//! their native semantics; via `fetch` otherwise). Request-body replay itself keeps no server-side state.
 //!
 //! ## Why it needs no signature
 //!
@@ -68,7 +68,9 @@ const MAX_CONTENT_TYPE: usize = 200;
 pub fn method_replayable(method: &str) -> bool {
     !method.is_empty()
         && method.bytes().all(|b| b.is_ascii_alphabetic())
-        && !NEVER_REPLAYED.iter().any(|m| m.eq_ignore_ascii_case(method))
+        && !NEVER_REPLAYED
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case(method))
 }
 
 /// A request captured at the gate, ready to be handed to the challenge page.

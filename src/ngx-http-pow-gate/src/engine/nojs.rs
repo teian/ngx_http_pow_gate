@@ -15,24 +15,45 @@
 use ngx::core::Status;
 use ngx::ffi::ngx_str_t;
 use ngx::http::{HTTPStatus, Request};
-use pow_gate_core::{clearance, nojs};
+use pow_gate_core::{clearance, context::Assurance, nojs, redemption::Outcome};
 
 use crate::challenge::serve_nojs_page;
 use crate::response::{as_str, send_and_finish_with_headers};
 use crate::runtime::{self, Cfg};
 
-pub fn pass(r: &mut Request, cfg: &Cfg, nojs_template: &ngx_str_t) -> Status {
+pub fn pass(r: &mut Request, cfg: &Cfg, nojs_template: &ngx_str_t, required: Assurance) -> Status {
     // No usable HMAC key -> never mint anything (same stance as /verify).
     if !cfg.key_ok {
         return send_and_finish_with_headers(
-            r, HTTPStatus::SERVICE_UNAVAILABLE, "text/plain", b"unavailable\n", &[]);
+            r,
+            HTTPStatus::SERVICE_UNAVAILABLE,
+            "text/plain",
+            b"unavailable\n",
+            &[],
+        );
     }
     let now = runtime::now();
+    let Assurance::NoJs { delay } = required else {
+        return HTTPStatus::BAD_REQUEST.into();
+    };
+    let Some(context) = runtime::client_context(r, cfg) else {
+        return HTTPStatus::SERVICE_UNAVAILABLE.into();
+    };
 
     let token = query_param(r, "t").unwrap_or_default();
-    match nojs::verify(&cfg.key, &token, now) {
+    match nojs::verify(&cfg.key, &token, now, &context) {
         nojs::Verdict::Ok(grant) => {
-            let clearance = clearance::issue(&cfg.key, &[], now, cfg.clearance_ttl);
+            if grant.delay != delay {
+                return HTTPStatus::BAD_REQUEST.into();
+            }
+            match crate::redemption::consume(&token, grant.iat + nojs::NOJS_GRACE) {
+                Outcome::Accepted => {}
+                Outcome::Reused => return HTTPStatus::CONFLICT.into(),
+                Outcome::Expired => return HTTPStatus::BAD_REQUEST.into(),
+                _ => return HTTPStatus::SERVICE_UNAVAILABLE.into(),
+            }
+            let clearance =
+                clearance::issue(&cfg.key, &[], &context, required, now, cfg.clearance_ttl);
             let set_cookie = runtime::build_set_cookie(&clearance, &cfg.cookie);
             // Tiny body doubles as the fallback for agents that don't follow
             // redirects, and guarantees the response is flushed (see the
@@ -53,7 +74,7 @@ pub fn pass(r: &mut Request, cfg: &Cfg, nojs_template: &ngx_str_t) -> Status {
         nojs::Verdict::TooEarly(grant) => {
             // Fresh grant, wait starts over — the delay cannot be skipped by
             // hammering the pass URL.
-            let fresh = nojs::issue(&cfg.key, &grant.path, grant.delay, now);
+            let fresh = nojs::issue(&cfg.key, &grant.path, delay, now, &context);
             let pass_url = format!("{}pass?t={}", cfg.endpoint, fresh);
             serve_nojs_page(r, nojs_template, &pass_url, grant.delay)
         }

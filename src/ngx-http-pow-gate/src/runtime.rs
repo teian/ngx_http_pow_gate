@@ -30,6 +30,8 @@ pub struct Cfg {
     /// rather than HMAC-ing with an empty/weak key.
     pub key_ok: bool,
     pub difficulty: u64,
+    pub address: pow_gate_core::context::AddressPolicy,
+    pub policy: String,
     pub clearance_ttl: i64,
     pub proof_skew: i64,
     /// Require a valid per-request proof on non-navigation requests (cookie alone
@@ -89,6 +91,11 @@ pub fn resolve(lc: &LocationConf) -> Cfg {
             key,
             key_ok,
             difficulty: lc.difficulty as u64,
+            address: pow_gate_core::context::AddressPolicy {
+                ipv4_prefix: lc.ipv4_prefix as u8,
+                ipv6_prefix: lc.ipv6_prefix as u8,
+            },
+            policy: as_str(&lc.policy).to_owned(),
             clearance_ttl: lc.clearance_ttl as i64,
             proof_skew: lc.proof_skew as i64,
             require_proof: lc.require_proof != 0,
@@ -186,6 +193,21 @@ pub fn header(r: &Request, name: &str) -> Option<String> {
     None
 }
 
+/// Read a small protocol header without first cloning an arbitrary-sized value.
+pub fn header_limited(r: &Request, name: &str, limit: usize) -> Option<String> {
+    for (key, value) in r.headers_in_iterator() {
+        if key.as_bytes().eq_ignore_ascii_case(name.as_bytes()) {
+            if value.as_bytes().len() > limit {
+                return None;
+            }
+            return std::str::from_utf8(value.as_bytes())
+                .ok()
+                .map(str::to_owned);
+        }
+    }
+    None
+}
+
 /// The connecting client's IP from `connection->sockaddr`. Honours `realip`
 /// (which rewrites the connection address in an earlier phase). Family + address
 /// are read positionally to stay independent of the exact `sockaddr` binding.
@@ -255,11 +277,21 @@ pub unsafe fn content_length(r: *mut ngx_http_request_t) -> Option<usize> {
 /// # Safety
 /// `r` must be live with its body already read.
 pub unsafe fn request_body(r: *mut ngx_http_request_t) -> Option<Vec<u8>> {
+    request_body_limited(r, usize::MAX)
+}
+
+/// Collect at most `limit` bytes, including temp-file-backed segments. Used by
+/// verification so large/chunked JSON cannot grow a worker's parsing buffer.
+pub unsafe fn request_body_limited(r: *mut ngx_http_request_t, limit: usize) -> Option<Vec<u8>> {
     let rb = (*r).request_body;
     if rb.is_null() {
         return None;
     }
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(if limit == usize::MAX {
+        0
+    } else {
+        limit.min(8192)
+    });
     let mut cl = (*rb).bufs;
     while !cl.is_null() {
         let b = (*cl).buf;
@@ -271,7 +303,11 @@ pub unsafe fn request_body(r: *mut ngx_http_request_t) -> Option<Vec<u8>> {
                 let (start, end) = ((*b).file_pos, (*b).file_last);
                 if !file.is_null() && end > start {
                     let base = out.len();
-                    out.resize(base + (end - start) as usize, 0);
+                    let length = usize::try_from(end - start).ok()?;
+                    if length > limit.saturating_sub(base) {
+                        return None;
+                    }
+                    out.resize(base + length, 0);
                     if !read_file_range((*file).fd, &mut out[base..], start) {
                         return None; // unreadable temp file -> treat as bad request
                     }
@@ -279,6 +315,9 @@ pub unsafe fn request_body(r: *mut ngx_http_request_t) -> Option<Vec<u8>> {
             } else if !(*b).pos.is_null() {
                 let len = (*b).last.offset_from((*b).pos);
                 if len > 0 {
+                    if len as usize > limit.saturating_sub(out.len()) {
+                        return None;
+                    }
                     out.extend_from_slice(std::slice::from_raw_parts((*b).pos, len as usize));
                 }
             }
@@ -325,4 +364,39 @@ pub fn build_set_cookie(value: &str, c: &CookieConfig) -> String {
         s.push_str("; HttpOnly");
     }
     s
+}
+
+/// Opaque binding of client address, UA, policy scope and replay-store identity.
+/// No client-supplied forwarding header is trusted; realip must be configured on
+/// nginx when it sits behind a trusted load balancer.
+pub fn client_context(r: &Request, cfg: &Cfg) -> Option<String> {
+    let issuer = crate::redemption::issuer()?;
+    let ip = client_ip(r)?;
+    let raw = r as *const Request as *mut ngx_http_request_t;
+    let scope_host = cfg
+        .cookie
+        .domain
+        .clone()
+        .unwrap_or_else(|| unsafe { as_str(&(*raw).headers_in.server).to_owned() })
+        .trim_start_matches('.')
+        .to_ascii_lowercase();
+    if scope_host.is_empty() {
+        return None;
+    }
+    let scope = serde_json::to_string(&(
+        scope_host,
+        &cfg.cookie.name,
+        &cfg.cookie.path,
+        &cfg.endpoint,
+        &cfg.policy,
+    ))
+    .ok()?;
+    pow_gate_core::context::binding(
+        &cfg.key,
+        ip,
+        &header(r, "user-agent").unwrap_or_default(),
+        &scope,
+        &issuer,
+        cfg.address,
+    )
 }

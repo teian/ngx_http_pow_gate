@@ -54,7 +54,7 @@ EOF
     echo "== smoke checks ($base)"
     check "no upstream without solve"  "no" "$(curl -s "$base/" | grep -q 'upstream-content' && echo yes || echo no)"
     check "solver endpoint"            "200" "$(curl -s -o /dev/null -w '%{http_code}' "$base/.pow/solver.js")"
-    check "challenge endpoint"         "200" "$(curl -s -o /dev/null -w '%{http_code}' "$base/.pow/challenge")"
+    check "challenge requires key"     "400" "$(curl -s -o /dev/null -w '%{http_code}' "$base/.pow/challenge")"
     check "excluded path (healthz)"    "ok" "$(curl -s "$base/healthz")"
     check "verified good bot"          "yes" "$(curl -s -A verifierbot "$base/" | grep -q 'upstream-content' && echo yes || echo no)"
     check "denied bot"                 "403" "$(curl -s -o /dev/null -w '%{http_code}' -A denybot "$base/")"

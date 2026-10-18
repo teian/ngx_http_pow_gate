@@ -1,96 +1,78 @@
-//! End-to-end PoW handshake tests. Own test crate; public API only.
-
-use pow_gate_core::pow::{issue, verify_solution, Verdict};
-use pow_gate_core::target::solution_valid;
+use pow_gate_core::{
+    pow::{self, Challenge, Verdict},
+    target::solution_valid,
+};
 
 const KEY: &[u8] = b"server-secret-key";
+const PK: &[u8] = b"committed-client-public-key";
+const CONTEXT: &str = "client-and-policy";
 
-fn solve(salt: &str, difficulty: u64) -> u64 {
-    let mut n = 0u64;
-    while !solution_valid(salt, n, difficulty) {
-        n += 1;
+fn issue(difficulty: u64) -> Challenge {
+    pow::issue(KEY, PK, CONTEXT, difficulty, 1000, 30)
+}
+fn solve(c: &Challenge) -> u64 {
+    (0..)
+        .find(|n| solution_valid(&c.salt, *n, c.difficulty))
+        .unwrap()
+}
+fn verify(c: &Challenge, nonce: u64, now: i64) -> Verdict {
+    pow::verify_solution(KEY, c, nonce, PK, CONTEXT, c.difficulty, now)
+}
+
+#[test]
+fn accepts_solution_and_rejects_at_expiry() {
+    let c = issue(2000);
+    let n = solve(&c);
+    assert_eq!(verify(&c, n, 1005), Verdict::Ok);
+    assert_eq!(verify(&c, n, c.exp), Verdict::Expired);
+}
+
+#[test]
+fn rejects_tampered_parameters_and_legacy_version() {
+    let c = issue(512);
+    let n = solve(&c);
+    for field in 0..5 {
+        let mut bad = c.clone();
+        match field {
+            0 => bad.token.push('x'),
+            1 => bad.salt.push('x'),
+            2 => bad.exp += 1,
+            3 => bad.difficulty = 1,
+            _ => bad.version = 1,
+        }
+        assert_eq!(verify(&bad, n, 1005), Verdict::BadToken);
     }
-    n
 }
 
 #[test]
-fn full_handshake_accepts_a_real_solution() {
-    let c = issue(KEY, 2000, 1000, 30);
-    let nonce = solve(&c.salt, c.difficulty);
-    assert_eq!(
-        verify_solution(KEY, &c.salt, c.exp, &c.token, nonce, c.difficulty, 1005),
-        Verdict::Ok
-    );
+fn rejects_wrong_solution() {
+    let c = issue(1 << 30);
+    let bad = (0..)
+        .find(|n| !solution_valid(&c.salt, *n, c.difficulty))
+        .unwrap();
+    assert_eq!(verify(&c, bad, 1005), Verdict::WrongSolution);
 }
 
 #[test]
-fn rejects_expired() {
-    let c = issue(KEY, 2000, 1000, 30);
-    let nonce = solve(&c.salt, c.difficulty);
-    assert_eq!(
-        verify_solution(KEY, &c.salt, c.exp, &c.token, nonce, c.difficulty, 9999),
-        Verdict::Expired
-    );
+fn binds_key_client_context_and_current_issuing_policy() {
+    let c = issue(512);
+    let n = solve(&c);
+    for (key, pk, context, difficulty) in [
+        (&b"wrong-server-key"[..], PK, CONTEXT, 512),
+        (KEY, &b"different-public-key"[..], CONTEXT, 512),
+        (KEY, PK, "other-client-or-policy", 512),
+        (KEY, PK, CONTEXT, 2000),
+    ] {
+        assert_eq!(
+            pow::verify_solution(key, &c, n, pk, context, difficulty, 1005),
+            Verdict::BadToken
+        );
+    }
 }
 
 #[test]
-fn rejects_forged_or_tampered_token() {
-    let c = issue(KEY, 2000, 1000, 30);
-    let nonce = solve(&c.salt, c.difficulty);
-    assert_eq!(
-        verify_solution(KEY, &c.salt, c.exp, "not-the-token", nonce, c.difficulty, 1005),
-        Verdict::BadToken
-    );
-    assert_eq!(
-        verify_solution(KEY, "00000000", c.exp, &c.token, nonce, c.difficulty, 1005),
-        Verdict::BadToken
-    );
-}
-
-#[test]
-fn rejects_wrong_nonce() {
-    let c = issue(KEY, 1 << 30, 1000, 30);
-    let bad = if solution_valid(&c.salt, 0, c.difficulty) { 1 } else { 0 };
-    assert_eq!(
-        verify_solution(KEY, &c.salt, c.exp, &c.token, bad, c.difficulty, 1005),
-        Verdict::WrongSolution
-    );
-}
-
-#[test]
-fn client_cannot_downgrade_difficulty() {
-    // A solution valid at an easy difficulty must NOT pass when the server
-    // verifies at its own (harder) difficulty.
-    let server_difficulty = 1 << 28;
-    let c = issue(KEY, server_difficulty, 1000, 30);
-    let easy_nonce = solve(&c.salt, 4); // trivially solvable
-    assert_ne!(
-        verify_solution(KEY, &c.salt, c.exp, &c.token, easy_nonce, server_difficulty, 1005),
-        Verdict::Ok
-    );
-}
-
-#[test]
-fn echoed_difficulty_is_bound_by_the_token() {
-    // The client echoes the difficulty back, but it is HMAC-bound: echoing a
-    // lower one (with a matching trivial solution) must fail as BadToken.
-    let c = issue(KEY, 1 << 28, 1000, 30);
-    let easy_nonce = solve(&c.salt, 4);
-    assert_eq!(
-        verify_solution(KEY, &c.salt, c.exp, &c.token, easy_nonce, 4, 1005),
-        Verdict::BadToken
-    );
-}
-
-#[test]
-fn per_request_difficulty_verifies_statelessly() {
-    // A challenge issued with a per-decision override verifies with the echoed
-    // override — no server-side state needed.
-    let c = issue(KEY, 512, 1000, 30);
-    assert_eq!(c.difficulty, 512);
-    let nonce = solve(&c.salt, c.difficulty);
-    assert_eq!(
-        verify_solution(KEY, &c.salt, c.exp, &c.token, nonce, c.difficulty, 1005),
-        Verdict::Ok
-    );
+fn cannot_echo_an_easier_difficulty() {
+    let mut c = issue(1 << 28);
+    c.difficulty = 1;
+    assert_eq!(verify(&c, 0, 1005), Verdict::BadToken);
 }

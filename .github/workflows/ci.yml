@@ -11,6 +11,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: nginx channel updater regression tests
+        run: python3 tests/build/test_nginx_versions.py
       - name: core unit tests
         run: cd src/pow-gate-core && cargo test --locked || cargo test
       - name: e2e client compiles
@@ -27,6 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        nginx: [mainline, stable]
         libc: [debian, alpine]
         arch: [amd64, arm64]
         include:
@@ -36,7 +39,9 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v5
-      - name: run end-to-end (${{ matrix.libc }}/${{ matrix.arch }})
+      - name: select pinned nginx channel
+        run: python3 scripts/nginx-versions.py ${{ matrix.nginx }} >> "$GITHUB_ENV"
+      - name: run end-to-end (${{ matrix.nginx }}/${{ matrix.libc }}/${{ matrix.arch }})
         env:
           SMOKE_TARGET: nginx-smoke-${{ matrix.libc }}
         run: |

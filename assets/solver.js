@@ -365,7 +365,10 @@
   // challenge and try again — NOT dead-end into the error box.
   async function attempt(kp) {
     status(tr("requesting", "Requesting challenge…"));
-    var ch = await fetch(ENDPOINT + "challenge", { credentials: "same-origin" })
+    var ch = await fetch(ENDPOINT + "challenge", {
+      credentials: "same-origin", cache: "no-store",
+      headers: { "X-Pow-Key": b64url(kp.pubRaw) },
+    })
       .then(function (r) { return r.json(); });
 
     status(tr("verifying", "Verifying…"));
@@ -379,6 +382,10 @@
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        version: ch.version,
+        signature: b64url(new Uint8Array(await crypto.subtle.sign(
+          { name: "ECDSA", hash: "SHA-256" }, kp.privateKey,
+          enc.encode("pow-gate-redeem-v2 " + ch.token)))),
         salt: ch.salt, exp: ch.exp, token: ch.token,
         nonce: nonce, pubkey: b64url(kp.pubRaw),
         // echoed but HMAC-bound by `token` — the server holds us to exactly

@@ -25,9 +25,11 @@ use ngx::ffi::{ngx_cycle_t, ngx_int_t};
 /// the location tree into process memory (the directive inherits, so most
 /// deployments have exactly one). Runs once per nginx worker after fork.
 pub extern "C" fn init_process(cycle: *mut ngx_cycle_t) -> ngx_int_t {
-    let _ = cycle;
+    if !unsafe { crate::redemption::activate(cycle) } {
+        return ngx::core::Status::NGX_ERROR.0 as ngx_int_t;
+    }
     // Start the per-worker IP-range refreshers for every configured verifier.
     // (Threads must start post-fork, hence here rather than at config time.)
-    crate::verifier::start_refreshers();
+    crate::verifier::start_refreshers(cycle);
     ngx::core::Status::NGX_OK.0 as ngx_int_t
 }

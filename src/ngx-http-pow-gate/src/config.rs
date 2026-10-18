@@ -38,7 +38,11 @@ const UNSET_SIZE: usize = usize::MAX; // NGX_CONF_UNSET_SIZE
 #[inline]
 unsafe fn merge_flag(conf: &mut ngx_flag_t, prev: ngx_flag_t, default: ngx_flag_t) {
     if *conf == NGX_CONF_UNSET as ngx_flag_t {
-        *conf = if prev == NGX_CONF_UNSET as ngx_flag_t { default } else { prev };
+        *conf = if prev == NGX_CONF_UNSET as ngx_flag_t {
+            default
+        } else {
+            prev
+        };
     }
 }
 #[inline]
@@ -56,7 +60,11 @@ unsafe fn merge_size(conf: &mut usize, prev: usize, default: usize) {
 #[inline]
 unsafe fn merge_sec(conf: &mut time_t, prev: time_t, default: time_t) {
     if *conf == NGX_CONF_UNSET as time_t {
-        *conf = if prev == NGX_CONF_UNSET as time_t { default } else { prev };
+        *conf = if prev == NGX_CONF_UNSET as time_t {
+            default
+        } else {
+            prev
+        };
     }
 }
 #[inline]
@@ -104,34 +112,38 @@ pub struct LocationConf {
     pub nojs_page_cache: ngx_str_t, // template bytes (loaded once at merge)
 
     // ── PoW + token tunables (were http-only; now inherit to server/location) ──
-    pub difficulty: ngx_uint_t,   // pow_gate_difficulty N
-    pub hmac_key_file: ngx_str_t, // pow_gate_hmac_key_file <file>
-    pub clearance_ttl: time_t,    // pow_gate_clearance_ttl <time>
-    pub proof_skew: time_t,       // pow_gate_proof_skew <time>
+    pub difficulty: ngx_uint_t,    // pow_gate_difficulty N
+    pub hmac_key_file: ngx_str_t,  // pow_gate_hmac_key_file <file>
+    pub clearance_ttl: time_t,     // pow_gate_clearance_ttl <time>
+    pub proof_skew: time_t,        // pow_gate_proof_skew <time>
     pub require_proof: ngx_flag_t, // pow_gate_require_proof on|off (fetch/XHR)
-    pub endpoint: ngx_str_t,      // pow_gate_endpoint <prefix>
+    pub ipv4_prefix: ngx_uint_t,
+    pub ipv6_prefix: ngx_uint_t,
+    pub policy: ngx_str_t,
+    pub endpoint: ngx_str_t, // pow_gate_endpoint <prefix>
 
     // ── captured-request replay (a POST must survive the challenge) ──
-    pub replay: ngx_flag_t,       // pow_gate_replay on|off
-    pub replay_max_body: usize,   // pow_gate_replay_max_body <size>
+    pub replay: ngx_flag_t,     // pow_gate_replay on|off
+    pub replay_max_body: usize, // pow_gate_replay_max_body <size>
 
     // ── clearance-cookie attributes (pow_gate_cookie_*) ──
     // Empty str / NGX_CONF_UNSET flag ⇒ merge applies the documented default.
-    pub cookie_name: ngx_str_t,      // default: pow_clearance
-    pub cookie_domain: ngx_str_t,    // default: host-only (no Domain=)
-    pub cookie_path: ngx_str_t,      // default: /
-    pub cookie_samesite: ngx_str_t,  // Lax|Strict|None, default: Lax
-    pub cookie_secure: ngx_flag_t,   // default: on
+    pub cookie_name: ngx_str_t,     // default: pow_clearance
+    pub cookie_domain: ngx_str_t,   // default: host-only (no Domain=)
+    pub cookie_path: ngx_str_t,     // default: /
+    pub cookie_samesite: ngx_str_t, // Lax|Strict|None, default: Lax
+    pub cookie_secure: ngx_flag_t,  // default: on
     pub cookie_httponly: ngx_flag_t, // default: on
-    // Max-Age tracks pow_gate_clearance_ttl; no separate directive.
+                                    // Max-Age tracks pow_gate_clearance_ttl; no separate directive.
 }
 
 // ───────────────────────── main (per-http) configuration ──────────────────────
 //
-// Only the global verifier registry. Everything else is inheritable LocationConf.
+// Cycle-owned verifier definitions and replay zone. Other settings inherit.
 
 #[repr(C)]
 pub struct MainConf {
+    pub redemption_zone: *mut ngx_shm_zone_t,
     pub verifiers: *mut c_void, // map<name, Verifier> built by pow_gate_verifier {}
 }
 
@@ -143,7 +155,7 @@ const SERVER_LOCATION: ngx_uint_t = (NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF) as n
 // ───────────────────────────── command table ─────────────────────────────────
 
 #[no_mangle]
-pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 21] = [
+pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 24] = [
     // pow_gate on|off;
     ngx_command_t {
         name: ngx_string!("pow_gate"),
@@ -236,6 +248,30 @@ pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 21] = [
         set: Some(ngx_conf_set_flag_slot),
         conf: NGX_HTTP_LOC_CONF_OFFSET,
         offset: offset_of!(LocationConf, require_proof),
+        post: ptr::null_mut(),
+    },
+    ngx_command_t {
+        name: ngx_string!("pow_gate_ipv4_prefix"),
+        type_: HTTP_SERVER_LOCATION | NGX_CONF_TAKE1 as ngx_uint_t,
+        set: Some(ngx_conf_set_num_slot),
+        conf: NGX_HTTP_LOC_CONF_OFFSET,
+        offset: offset_of!(LocationConf, ipv4_prefix),
+        post: ptr::null_mut(),
+    },
+    ngx_command_t {
+        name: ngx_string!("pow_gate_ipv6_prefix"),
+        type_: HTTP_SERVER_LOCATION | NGX_CONF_TAKE1 as ngx_uint_t,
+        set: Some(ngx_conf_set_num_slot),
+        conf: NGX_HTTP_LOC_CONF_OFFSET,
+        offset: offset_of!(LocationConf, ipv6_prefix),
+        post: ptr::null_mut(),
+    },
+    ngx_command_t {
+        name: ngx_string!("pow_gate_policy"),
+        type_: HTTP_SERVER_LOCATION | NGX_CONF_TAKE1 as ngx_uint_t,
+        set: Some(ngx_conf_set_str_slot),
+        conf: NGX_HTTP_LOC_CONF_OFFSET,
+        offset: offset_of!(LocationConf, policy),
         post: ptr::null_mut(),
     },
     // pow_gate_endpoint <prefix>;
@@ -335,7 +371,10 @@ pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 21] = [
     },
     // ngx_null_command terminator — nginx scans until it hits a zeroed entry.
     ngx_command_t {
-        name: ngx_str_t { len: 0, data: ptr::null_mut() },
+        name: ngx_str_t {
+            len: 0,
+            data: ptr::null_mut(),
+        },
         type_: 0,
         set: None,
         conf: 0,
@@ -369,6 +408,8 @@ pub extern "C" fn create_location_conf(cf: *mut ngx_conf_t) -> *mut c_void {
         (*p).trusted = ptr::null_mut(); // NGX_CONF_UNSET_PTR conceptually
         (*p).decision = ptr::null_mut();
         (*p).difficulty = UNSET_UINT;
+        (*p).ipv4_prefix = UNSET_UINT;
+        (*p).ipv6_prefix = UNSET_UINT;
         (*p).clearance_ttl = NGX_CONF_UNSET as time_t;
         (*p).proof_skew = NGX_CONF_UNSET as time_t;
         (*p).require_proof = NGX_CONF_UNSET as ngx_flag_t;
@@ -401,10 +442,25 @@ pub extern "C" fn merge_location_conf(
         merge_str(&mut conf.nojs_page_path, &prev.nojs_page_path, b"");
 
         merge_uint(&mut conf.difficulty, prev.difficulty, 50000);
+        merge_uint(&mut conf.ipv4_prefix, prev.ipv4_prefix, 32);
+        merge_uint(&mut conf.ipv6_prefix, prev.ipv6_prefix, 128);
+        merge_str(&mut conf.policy, &prev.policy, b"default");
+        if !(1..=32).contains(&conf.ipv4_prefix) || !(1..=128).contains(&conf.ipv6_prefix) {
+            eprintln!("[pow_gate] address prefixes must be 1..32 (IPv4) and 1..128 (IPv6)");
+            return NGX_CONF_ERROR;
+        }
         merge_str(&mut conf.hmac_key_file, &prev.hmac_key_file, b"");
-        merge_sec(&mut conf.clearance_ttl, prev.clearance_ttl, 43200 /* 12h */);
+        merge_sec(
+            &mut conf.clearance_ttl,
+            prev.clearance_ttl,
+            43200, /* 12h */
+        );
         merge_sec(&mut conf.proof_skew, prev.proof_skew, 5);
-        merge_flag(&mut conf.require_proof, prev.require_proof, 0 /* off */);
+        merge_flag(
+            &mut conf.require_proof,
+            prev.require_proof,
+            0, /* off */
+        );
         merge_str(&mut conf.endpoint, &prev.endpoint, b"/.pow/");
         merge_flag(&mut conf.replay, prev.replay, 1 /* on */);
         // Default tracks nginx's own client_max_body_size default (1m): a body
@@ -416,7 +472,11 @@ pub extern "C" fn merge_location_conf(
         merge_str(&mut conf.cookie_path, &prev.cookie_path, b"/");
         merge_str(&mut conf.cookie_samesite, &prev.cookie_samesite, b"Lax");
         merge_flag(&mut conf.cookie_secure, prev.cookie_secure, 1 /* on */);
-        merge_flag(&mut conf.cookie_httponly, prev.cookie_httponly, 1 /* on */);
+        merge_flag(
+            &mut conf.cookie_httponly,
+            prev.cookie_httponly,
+            1, /* on */
+        );
 
         // Where the gate is on, the HMAC key is mandatory and must be usable.
         // Validate NOW so a misconfigured gate refuses to start instead of
@@ -425,6 +485,10 @@ pub extern "C" fn merge_location_conf(
         // and additionally fails closed (see runtime::load_key / Cfg::key_ok),
         // which also covers the case where only the worker user can't read it.
         if conf.enabled != 0 {
+            if conf.difficulty == 0 || conf.clearance_ttl <= 0 {
+                eprintln!("[pow_gate] difficulty and clearance TTL must be positive");
+                return NGX_CONF_ERROR;
+            }
             let key_path = crate::response::as_str(&conf.hmac_key_file);
             let usable = matches!(
                 std::fs::read(key_path),

@@ -31,10 +31,17 @@ jobs:
         run: ./scripts/update-nginx.sh
       - name: smoke (glibc)
         if: steps.update.outputs.updated == 'true'
-        run: docker build -f docker/Dockerfile --target nginx-smoke-debian .
+        run: |
+          for channel in mainline stable; do
+            ./scripts/build-nginx.sh "$channel" --target nginx-smoke-debian
+            ./scripts/build-nginx.sh "$channel" --target security-reload
+          done
       - name: smoke (musl)
         if: steps.update.outputs.updated == 'true'
-        run: docker build -f docker/Dockerfile --target nginx-smoke-alpine .
+        run: |
+          for channel in mainline stable; do
+            ./scripts/build-nginx.sh "$channel" --target nginx-smoke-alpine
+          done
       - name: open PR
         if: steps.update.outputs.updated == 'true'
         uses: peter-evans/create-pull-request@v8
@@ -47,11 +54,12 @@ jobs:
             Automated nginx bump: **${{ steps.update.outputs.old }} → ${{ steps.update.outputs.new }}**
 
             Updated by `scripts/update-nginx.sh`:
-            - `docker/Dockerfile` — `NGINX_VERSION`, tarball `NGINX_SHA256`, image digests (Debian + Alpine, resolved via `docker buildx imagetools inspect`)
-            - `.cargo/config.toml`, `docker-compose.{test,perf}.yml`, `README.md`, `docs/`
+            - `docker/nginx-versions.json` — latest mainline AND stable versions, source hashes and runtime image digests
+            - `docker/Dockerfile` — mainline defaults
+            - `.cargo/config.toml`, `docker-compose.{test,dev,perf}.yml`, `README.md`, `docs/`
 
             Pre-validated in this workflow run: module builds against the new
-            nginx and loads (`nginx -t`) on glibc **and** musl.
+            mainline and stable nginx and loads (`nginx -t`) on glibc **and** musl.
 
             After merge, a release stays manual — tag `v<module-version>` when
             you want one; `release.yml` then builds, signs, and publishes.

@@ -1,6 +1,6 @@
 # Testing & self-verification
 
-The project verifies itself at three levels, each runnable on its own. The split
+The project verifies both latest pinned mainline and stable nginx at three levels, each runnable on its own. The split
 exists because the crypto can be tested anywhere, but the nginx module can only be
 built and exercised against a real nginx — so that part runs in Docker.
 
@@ -198,14 +198,14 @@ CI is split across a few workflows:
 
 - [ci.yml](../.github/workflows/ci.yml) — a fast `core` job (engine tests + e2e
   client compiles) and an `e2e` job (the live handshake) as a **matrix of
-  `{libc × arch}`** (`debian`→glibc, `alpine`→musl, on `amd64` and `arm64`).
+  `{nginx channel × libc × arch}`** (`debian`→glibc, `alpine`→musl, on `amd64` and `arm64`).
 - [module-amd64.yml](../.github/workflows/module-amd64.yml) /
   [module-arm64.yml](../.github/workflows/module-arm64.yml) — build the `.so` +
   `nginx -t` for both libc on each architecture. Split per arch so each carries
   its own status badge (native arm runners, no QEMU; digest-pinned multi-arch
   base images resolve to the runner's arch).
 - [release.yml](../.github/workflows/release.yml) — on a tag: reproducible double
-  build + provenance + cosign + checksums for all four `{libc × arch}` `.so`s; see
+  build + provenance + cosign + checksums for all four `{nginx channel × libc × arch}` `.so`s; see
   [build.md](build.md#verifiable-builds).
 
 ---
@@ -219,10 +219,84 @@ CI is split across a few workflows:
 | nginx-smoke-{debian,alpine}  | the module loads and every directive parses, on both libc          | Docker  |
 | e2e          | the live request flow works end to end against real nginx (per libc) | Docker  |
 
-> Status (verified): **all four layers are green, nothing left as scaffold.** The
-> engine is unit-tested, the module compiles against nginx 1.31.3, loads
-> (`nginx -t`), and passes the full live handshake — an uncleared request is
-> challenged, the client solves the PoW with `pow-gate-core`, `POST /verify`
-> returns a clearance cookie, and a cleared request (cookie + `X-Pow-Proof`)
-> reaches the upstream. The e2e also exercises the **good-bot verifier**: a
-> `verify:<name>` UA is allowed via a live IP-range feed the refresher fetched.
+The 2026-10-18 local review passed 63 core tests, two updater regression tests,
+native glibc/amd64 builds and `nginx -t` on 1.31.7 and 1.30.6, the full live
+Rust/Node HTTP/1.1 and HTTP/2 suites on both versions, and early/late failed-reload
+regressions. The full Docker musl/arm64 matrix is configured in CI and was not
+executed locally during this review.
+
+The HTTP/3 follow-up also passed on both versions with four workers, using native
+glibc/amd64 HTTP/3-enabled nginx. Both the existing distributable modules and
+fresh modules built against the HTTP/3-enabled source trees passed. HTTP/1.1 and
+HTTP/2 regression suites passed on the expanded TLS/QUIC fixture as well.
+
+## Protocol-v2 security and memory checks
+
+Core tests cover key/client/policy binding, address-prefix boundaries, IPv4-mapped
+IPv6, assurance downgrade, legacy-token rejection, TTL reduction, key-possession
+signatures, expiry, ledger saturation and live-entry retention. The fixed table
+fits the 2 MiB zone. The live fixture runs four nginx workers and races 16
+redemptions, asserting exactly one 204 and fifteen 409s; it also checks cookie UA
+binding and no-JS grant reuse.
+
+`tests/pow-clearance/security-test.mjs` additionally tests genuine source-address
+changes (when `POW_TEST_SECOND_IP=127.0.0.2` on a loopback fixture), different named
+policies, higher required difficulty, another valid nonce for a spent challenge,
+method restrictions, the 8 KiB verify body cap and graceful reload preservation.
+The isolated fixture needs `/other-policy` and `/stronger` locations that serve
+the upstream marker but override policy name / difficulty. Only set
+`NGINX_PID_FILE` to that isolated fixture's PID file: the test sends SIGHUP to it.
+
+`http2-test.mjs` runs the redemption race over multiplexed HTTP/2 streams and
+tests unknown-length DATA at exactly 8 KiB and 8 KiB + 1. Both Node suites run
+after the Rust client in Docker e2e. `reload-test.py` starts its own unprivileged
+nginx and checks early/late failed reloads, worker respawn, pending no-JS grants,
+one-use state, and successful policy reload. Run it directly with paths to the
+matching native nginx and module, or use the `security-reload` Docker target.
+The Debian module workflows run this target on both versions and architectures.
+
+`http3-test.py` uses the pinned aioquic client over TLS/QUIC, with only `h3` in
+ALPN and no TCP fallback. It verifies the fixture's `X-Pow-Test-HTTP3: h3` marker
+on every response. Tests cover 16 concurrent streams on one connection, another
+16-connection race that must reach multiple nginx workers, invalid signatures,
+UA/address/policy/difficulty binding, nonce reuse, cookie navigation, required
+request proofs, and no-JS grant reuse. The streamed body test accepts exactly
+8,192 bytes and requires 413 for 8,193 bytes before the client sends FIN; the
+rejected request must not consume the legitimate challenge.
+
+The Docker fixture listens on UDP 8443 with a generated test certificate; the
+client trusts that certificate explicitly and validates the hostname. The TLS
+certificate and protocol/worker response headers are test-only. Both Debian and
+Alpine smoke images include this listener, and Docker e2e always runs HTTP/3
+after the HTTP/1.1 and HTTP/2 suites, for both nginx channels and architectures.
+The official runtime images must include nginx's HTTP/3 module.
+
+To run against an already started isolated fixture:
+
+```bash
+python3 -m venv .nginx/http3-venv
+.nginx/http3-venv/bin/pip install -r tests/pow-clearance/http3-requirements.txt
+.nginx/http3-venv/bin/python tests/pow-clearance/http3-test.py \
+  https://localhost:8443 --ca-file /path/to/test-tls/cert.pem
+```
+
+For native testing, configure nginx with `--with-compat --with-http_ssl_module
+--with-http_realip_module --with-http_v2_module --with-http_v3_module`, then build
+the matching module. The fixture's `/other-policy`, `/stronger`, trusted test-IP
+header, four workers, and protocol/worker response headers are required.
+See the [nginx HTTP/3 module](https://nginx.org/en/docs/http/ngx_http_v3_module.html)
+and [aioquic API](https://aioquic.readthedocs.io/en/latest/asyncio.html) documentation.
+This suite does not exercise 0-RTT, live address migration or UDP-loss behavior.
+
+CI builds/tests `{mainline, stable} x {glibc, musl} x {amd64, arm64}`. All source
+hashes/runtime image digests live in `docker/nginx-versions.json`. Use:
+
+```bash
+./scripts/build-nginx.sh mainline --target nginx-smoke-debian
+./scripts/build-nginx.sh stable --target nginx-smoke-alpine
+./scripts/test.sh docker  # both channels and both libcs, including live e2e
+```
+
+The daily updater checks the newest odd-minor mainline and even-minor stable
+release independently, and retains the previous channel pin until both runtime
+images exist. Release artifacts include the exact nginx version in their names.

@@ -58,3 +58,33 @@ fn garbage_signature_rejected() {
     assert!(!verify(&pk, "GET", "/x", 1000, &[0u8; 10], 1001, 5));
     assert!(!verify(&pk, "GET", "/x", 1000, &[0u8; 64], 1001, 5));
 }
+
+#[test]
+fn challenge_redemption_requires_the_committed_private_key() {
+    let sk = SigningKey::random(&mut OsRng);
+    let other = SigningKey::random(&mut OsRng);
+    let pk = sk.verifying_key().to_encoded_point(false);
+    let message = pow_gate_core::proof::challenge_message("signed-token");
+    let sig: Signature = sk.sign(message.as_bytes());
+    assert!(pow_gate_core::proof::valid_public_key(pk.as_bytes()));
+    assert!(pow_gate_core::proof::verify_challenge(
+        pk.as_bytes(),
+        "signed-token",
+        &sig.to_bytes()
+    ));
+    assert!(!pow_gate_core::proof::verify_challenge(
+        pk.as_bytes(),
+        "other-token",
+        &sig.to_bytes()
+    ));
+    let bad: Signature = other.sign(message.as_bytes());
+    assert!(!pow_gate_core::proof::verify_challenge(
+        pk.as_bytes(),
+        "signed-token",
+        &bad.to_bytes()
+    ));
+    assert!(!pow_gate_core::proof::valid_public_key(&[]));
+    assert!(!pow_gate_core::proof::valid_public_key(
+        pk.compress().as_bytes()
+    ));
+}

@@ -11,8 +11,9 @@ use ngx::ffi::{
     NGX_HTTP_SPECIAL_RESPONSE,
 };
 use ngx::http::{HTTPStatus, Request};
-use pow_gate_core::{clearance, codec, pow};
+use pow_gate_core::{clearance, codec, context::Assurance, pow, proof, redemption::Outcome};
 
+use crate::body_limit::VERIFY_LIMIT;
 use crate::response::{self, send_and_finish};
 use crate::runtime::{self, Cfg};
 
@@ -26,21 +27,57 @@ const CHALLENGE_GRACE: i64 = 120;
 /// (the decision `map` evaluates identically on this request, since it keys on
 /// the same client attributes). It is HMAC-bound into the token, so /verify
 /// holds the client to exactly this value.
-pub fn issue_challenge(r: &mut Request, cfg: &Cfg, difficulty: u64) -> Status {
+pub fn issue_challenge(r: &mut Request, cfg: &Cfg, required: Assurance) -> Status {
     // No usable HMAC key -> refuse rather than issue a forgeable challenge token.
     if !cfg.key_ok {
         return send_and_finish(
-            r, HTTPStatus::SERVICE_UNAVAILABLE, "text/plain", b"unavailable\n", None);
+            r,
+            HTTPStatus::SERVICE_UNAVAILABLE,
+            "text/plain",
+            b"unavailable\n",
+            None,
+        );
     }
-    let challenge = pow::issue(&cfg.key, difficulty, runtime::now(), CHALLENGE_GRACE);
+    let Assurance::Pow { difficulty } = required else {
+        return HTTPStatus::BAD_REQUEST.into();
+    };
+    let pk = runtime::header_limited(r, "x-pow-key", 87)
+        .filter(|s| s.len() == 87)
+        .and_then(|s| codec::unb64url(&s));
+    let Some(pk) = pk.filter(|pk| proof::valid_public_key(pk)) else {
+        return HTTPStatus::BAD_REQUEST.into();
+    };
+    let Some(context) = runtime::client_context(r, cfg) else {
+        return HTTPStatus::SERVICE_UNAVAILABLE.into();
+    };
+    let challenge = pow::issue(
+        &cfg.key,
+        &pk,
+        &context,
+        difficulty,
+        runtime::now(),
+        CHALLENGE_GRACE,
+    );
     let body = serde_json::to_vec(&challenge).unwrap_or_default();
-    send_and_finish(r, HTTPStatus::OK, "application/json", &body, None)
+    response::send_and_finish_with_headers(
+        r,
+        HTTPStatus::OK,
+        "application/json",
+        &body,
+        &[("Cache-Control", "no-store")],
+    )
 }
 
 /// `POST {endpoint}verify` → read the body asynchronously, then verify in
 /// [`verify_body`]. Returns `NGX_DONE` so the phase engine waits for the body.
 pub fn verify_solution(r: &mut Request) -> Status {
     let raw: *mut ngx_http_request_t = r as *mut Request as *mut ngx_http_request_t;
+    if unsafe { (*raw).headers_in.content_length_n } > VERIFY_LIMIT as i64 {
+        return HTTPStatus::REQUEST_ENTITY_TOO_LARGE.into();
+    }
+    if !unsafe { crate::body_limit::enable(raw) } {
+        return HTTPStatus::SERVICE_UNAVAILABLE.into();
+    }
     let rc = unsafe { ngx_http_read_client_request_body(raw, Some(verify_body)) };
     if rc >= NGX_HTTP_SPECIAL_RESPONSE as isize {
         return Status(rc);
@@ -59,6 +96,8 @@ pub fn verify_solution(r: &mut Request) -> Status {
 /// Submitted `/verify` body. Mirrors what solver.js POSTs.
 #[derive(serde::Deserialize)]
 struct Submission {
+    version: u8,
+    signature: String,
     salt: String,
     exp: i64,
     token: String,
@@ -66,10 +105,8 @@ struct Submission {
     /// base64url SEC1 (uncompressed) public key.
     pubkey: String,
     /// Difficulty echoed from the challenge. HMAC-bound by `token`, so it
-    /// cannot be lowered. `None` (a pre-0.2 solver) falls back to the
-    /// configured value — correct whenever no decision override is in play.
-    #[serde(default)]
-    difficulty: Option<u64>,
+    /// cannot be lowered. Required in protocol v2; legacy clients fail closed.
+    difficulty: u64,
 }
 
 /// Body-ready callback: validate the solution, set the clearance cookie, finalize.
@@ -87,7 +124,7 @@ extern "C" fn verify_body(r: *mut ngx_http_request_t) {
     }
     let now = runtime::now();
 
-    let body = match unsafe { runtime::request_body(r) } {
+    let body = match unsafe { runtime::request_body_limited(r, VERIFY_LIMIT) } {
         Some(b) => b,
         None => return finalize_status(req, HTTPStatus::BAD_REQUEST),
     };
@@ -96,24 +133,53 @@ extern "C" fn verify_body(r: *mut ngx_http_request_t) {
         Err(_) => return finalize_status(req, HTTPStatus::BAD_REQUEST),
     };
 
-    // The echoed difficulty is authenticated by the HMAC token (issue bound
-    // it); anything the server didn't issue fails as BadToken in core.
-    let difficulty = sub.difficulty.unwrap_or(cfg.difficulty);
-    let verdict = pow::verify_solution(
-        &cfg.key, &sub.salt, sub.exp, &sub.token, sub.nonce, difficulty, now,
-    );
-    if verdict != pow::Verdict::Ok {
+    let required = crate::access::required_assurance(req, lc, &cfg);
+    let Assurance::Pow { difficulty } = required else {
+        return finalize_status(req, HTTPStatus::BAD_REQUEST);
+    };
+    let pk = match codec::unb64url(&sub.pubkey) {
+        Some(pk) if proof::valid_public_key(&pk) => pk,
+        _ => return finalize_status(req, HTTPStatus::BAD_REQUEST),
+    };
+    let Some(context) = runtime::client_context(req, &cfg) else {
+        return finalize_status(req, HTTPStatus::SERVICE_UNAVAILABLE);
+    };
+    let challenge = pow::Challenge {
+        version: sub.version,
+        salt: sub.salt,
+        exp: sub.exp,
+        token: sub.token,
+        difficulty: sub.difficulty,
+    };
+    if pow::verify_solution(
+        &cfg.key, &challenge, sub.nonce, &pk, &context, difficulty, now,
+    ) != pow::Verdict::Ok
+    {
         return finalize_status(req, HTTPStatus::BAD_REQUEST);
     }
-
-    let pk = match codec::unb64url(&sub.pubkey) {
-        Some(pk) => pk,
-        None => return finalize_status(req, HTTPStatus::BAD_REQUEST),
+    let Some(signature) = codec::unb64url(&sub.signature) else {
+        return finalize_status(req, HTTPStatus::BAD_REQUEST);
     };
-
-    let token = clearance::issue(&cfg.key, &pk, now, cfg.clearance_ttl);
+    if !proof::verify_challenge(&pk, &challenge.token, &signature) {
+        return finalize_status(req, HTTPStatus::BAD_REQUEST);
+    }
+    // Consume only after ALL cryptographic and policy checks have passed.
+    // The nginx shared mutex makes this atomic across every worker.
+    match crate::redemption::consume(&challenge.token, challenge.exp) {
+        Outcome::Accepted => {}
+        Outcome::Reused => return finalize_status(req, HTTPStatus::CONFLICT),
+        Outcome::Expired => return finalize_status(req, HTTPStatus::BAD_REQUEST),
+        _ => return finalize_status(req, HTTPStatus::SERVICE_UNAVAILABLE),
+    }
+    let token = clearance::issue(&cfg.key, &pk, &context, required, now, cfg.clearance_ttl);
     let set_cookie = runtime::build_set_cookie(&token, &cfg.cookie);
-    let _ = send_and_finish(req, HTTPStatus::NO_CONTENT, "text/plain", &[], Some(&set_cookie));
+    let _ = response::send_and_finish_with_headers(
+        req,
+        HTTPStatus::NO_CONTENT,
+        "text/plain",
+        &[],
+        &[("Set-Cookie", &set_cookie), ("Cache-Control", "no-store")],
+    );
 }
 
 /// Finalize with a terse error response — used for the `400`/`503` paths.

@@ -4,6 +4,17 @@
 [![module-amd64](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-amd64.yml/badge.svg)](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-amd64.yml)
 [![module-arm64](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-arm64.yml/badge.svg)](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-arm64.yml)
 
+> **Protocol v2 / 0.4.0:** challenges commit the client key and address/UA/policy
+> context, require key possession and redeem once across nginx workers. Clearances
+> use the same binding and enforce minimum difficulty. The bounded replay store
+> uses **2 MiB shared per nginx instance**, survives graceful reloads and fails
+> closed at capacity. Full restarts invalidate tokens. V1 cookies/clients are not
+> accepted. See [security and Redis cluster proposal](docs/security.md).
+>
+> Builds and CI always cover latest pinned **mainline 1.31.7 and stable 1.30.6**,
+> each on glibc/musl and amd64/arm64. Select a channel using
+> `./scripts/build-nginx.sh stable --target nginx-smoke-debian`.
+
 A native **nginx dynamic module** that puts a **proof-of-work (PoW) gate** in front
 of your sites to deter scrapers, AI crawlers, and abusive bots — while letting
 real browsers, trusted networks, and *verified* good bots through with no friction.
@@ -15,12 +26,9 @@ module, and per–User-Agent decisions come from the built-in `map` module. The
 module only adds what stock nginx can't do: issuing/verifying proof-of-work,
 clearance cookies, and a *verified good-bot* allowlist (official IP ranges + FCrDNS).
 
-> **Status:** functional end-to-end, no scaffold left. The engine
-> (`src/pow-gate-core`) is **unit-tested** (31 tests), the solver is real, and the
-> module **compiles against nginx 1.31.3, loads, and passes a full live handshake**
-> (challenge → solve → verify → cleared) plus the **good-bot verifier** — all four
-> Docker pipeline stages green ([docs/testing.md](docs/testing.md)). See
-> [What's implemented](#whats-implemented).
+> **Status:** functional end to end, including the browser solver, good-bot
+> verifier and request replay. See [testing](docs/testing.md) for the tested
+> versions, local review results and configured CI matrix.
 
 ---
 
@@ -45,8 +53,7 @@ clearance cookies, and a *verified good-bot* allowlist (official IP ranges + FCr
 A proof-of-work gate makes every un-trusted client spend a small amount of CPU
 **before** it reaches your upstream. For a human loading a page once, that's a
 few hundred milliseconds, invisible behind a "Just a moment…" screen. For a
-scraper hitting thousands of URLs, that cost multiplies into something that
-actually hurts — without IP blocklists, CAPTCHAs, or a third-party service.
+scraper acquiring many client clearances, that cost accumulates — without IP blocklists, CAPTCHAs, or a third-party service.
 
 The gate is layered so most traffic never pays:
 
@@ -118,7 +125,7 @@ flowchart TD
 A challenged `POST` would otherwise be lost: the gate answers the submit with
 the challenge page, and the reload afterwards is a `GET`. So the module reads
 the body and hands the request back inside that page, where the solver re-issues
-it once the clearance is minted — stateless, nothing buffered server-side. See
+it once the clearance is minted — no request payload is retained server-side. See
 [`pow_gate_replay`](docs/configuration.md#pow_gate_replay-on--off).
 
 ---
@@ -139,12 +146,13 @@ sequenceDiagram
     B->>M: GET /  (no clearance)
     M-->>B: 200 challenge.html  (loads solver.js)
 
-    B->>M: GET /.pow/challenge
-    M-->>B: { salt, target, expires_at }
-    Note over B: generate keypair<br/>find nonce: SHA256(salt‖nonce) < target
+    B->>B: Generate or load client keypair
+    B->>M: GET /.pow/challenge (X-Pow-Key)
+    M-->>B: { version, salt, difficulty, exp, token }
+    Note over B: find nonce: SHA256(salt‖nonce) < target
 
-    B->>M: POST /.pow/verify { salt, nonce, pubkey }
-    Note over M: check salt unexpired & ours,<br/>SHA256(salt‖nonce) < target
+    B->>M: POST /.pow/verify { version, salt, nonce, pubkey, signature, ... }
+    Note over M: check binding, key possession and PoW,<br/>atomically consume challenge
     M-->>B: 204  Set-Cookie: pow_clearance=<HMAC token>
 
     B->>M: GET /  (Cookie: pow_clearance + X-Pow-Proof)
@@ -160,13 +168,14 @@ Two tokens, two jobs:
   Long-lived on purpose: a human solves once, then browses for the day without
   being re-challenged.
 - **Per-request proof** (`pow_gate_proof_skew`, e.g. 5s) — a DPoP-style signature
-  proving it's *the same client, this request, right now*. Defeats cookie theft
-  and replay. A stolen cookie is useless without the private key. Demanded only
+  proving possession of the clearance key for a recent request. Address/UA
+  binding restricts cookie transfer; the signature adds key possession on
+  requests carrying a proof. Demanded only
   from requests that can carry a custom header — `fetch`/XHR, marked
   `Sec-Fetch-Dest: empty` — and only with `pow_gate_require_proof on` (default
   `off`: it needs your pages to sign proofs on their own `fetch`/XHR calls);
   navigations and tag subresources (scripts, images, styles, fonts) always pass
-  on the cookie alone.
+  on a valid context-bound cookie.
 
 See [docs/protocol.md](docs/protocol.md) for token formats and endpoint contracts,
 and [docs/architecture.md](docs/architecture.md) for the threat model.
@@ -302,7 +311,7 @@ the request and calls into it. See [docs/testing.md](docs/testing.md).
 
 ```bash
 # build against a CONFIGURED nginx source tree (./configure first — see below)
-export NGINX_SOURCE_DIR=/path/to/nginx-1.31.3
+export NGINX_SOURCE_DIR=/path/to/nginx-1.31.7
 cargo build --release -p ngx-http-pow-gate
 
 # the artifact, renamed to the name used in load_module:
@@ -321,55 +330,38 @@ troubleshooting) are in [docs/build.md](docs/build.md).
 
 ## Performance
 
-Measured by the load suite (`./scripts/perf.sh`) against the module in nginx, and
-by engine microbenchmarks (`cargo bench -p pow-gate-core`). Numbers are from one
-small box — **the ratios are the point, not the absolutes**; full method and
-analysis in [docs/performance.md](docs/performance.md).
+The reviewed v0.4.0 bound-cookie path measured 51.4k requests/second versus
+59.4k for v0.3.0, with p50 latency of 142 µs versus 123 µs. These are medians of
+three short local runs against the same nginx 1.31.7 with four workers and eight
+clients; they are not production capacity estimates. Optional P-256 request
+proofs remain the dominant CPU cost (about 252 µs per core verification).
 
-**Per-request HTTP cost** (8 connections, 4 request classes):
-
-| Request class                         | req/s  | p50    | vs. baseline      |
-| ------------------------------------- | ------ | ------ | ----------------- |
-| `baseline` — gate off (ungated)       | 19420  | 411 µs | —                 |
-| `cleared` — clearance cookie, no proof| 17339  | 459 µs | **~0.9× (≈free)** |
-| `challenge` — serve the challenge page| 9465   | 796 µs | one-time/visitor  |
-| `proof` — cookie + `X-Pow-Proof`      | 2925   | 2.7 ms | **~6× slower**    |
-
-**Engine microbenchmarks** (per-op):
-
-| Operation                  | Cost     |
-| -------------------------- | -------- |
-| `clearance_verify` (HMAC)  | ~2.3 µs  |
-| `pow_verify_solution`      | ~2.0 µs  |
-| **`proof_verify` (ECDSA P-256)** | **~255 µs** |
-
-**Takeaways:**
-
-- **Cookie-only gating is essentially free** — a cleared request (the steady
-  state for top-level navigations) is within noise of ungated nginx.
-- **The per-request ECDSA proof is the bottleneck** — ~100× the HMAC cookie check,
-  capping throughput to roughly *cores × 4000 req/s* when present on every request.
-  It is *opt-in* hardening for `fetch`/XHR (navigations can't send the header), so
-  most page-view traffic never pays it. Mitigations (sampling, more cores) are in
-  [docs/performance.md](docs/performance.md).
+Replay state reserves one fixed **2 MiB shared-memory zone per nginx instance**,
+with 32,768 entries and bounded probing. Cookie checks do not lock that table.
+DNS jobs, resolver threads, verdict caches and verification bodies are bounded.
+Full methodology, memory snapshots and reproduction commands are in
+[docs/performance.md](docs/performance.md). Security guarantees, limitations and
+the proposed Redis cluster backend are in [docs/security.md](docs/security.md).
+A complete initial [global limits include](examples/regular-traffic-limits.conf)
+is available for regular traffic; it starts in dry-run mode for tuning.
 
 ---
 
 ## What's implemented
 
-The module is **functional end-to-end** — every feature below is exercised by the
-Docker pipeline ([docs/testing.md](docs/testing.md)), so this is reproducible, not
-a claim. There is no scaffold left.
-
-**Pipeline — all green:** core tests ✅ · module-build (glibc + musl, amd64 + arm64) ✅ · nginx-smoke (`nginx -t`, every libc×arch) ✅ · **e2e ✅**
+The module is functional end to end. Local v0.4.0 validation covers core tests
+and native glibc/amd64 builds and live HTTP/1.1, HTTP/2 and HTTP/3 suites on
+nginx 1.31.7 and 1.30.6. CI is
+configured for both versions across glibc/musl and amd64/arm64; that full Docker
+matrix was not run locally for this review. See [docs/testing.md](docs/testing.md).
 
 | Area | Evidence |
 | ---- | -------- |
-| Crypto engine — PoW, clearance, ECDSA proof, IP-ranges (`src/pow-gate-core`) | **32 unit tests** green (`cargo test -p pow-gate-core`) |
+| Crypto engine — PoW, clearance, ECDSA proof, IP-ranges (`src/pow-gate-core`) | **63 tests** green (`cargo test -p pow-gate-core`) |
 | Browser solver (`assets/solver.js`) | real WebCrypto keygen + 256-bit PoW + proof + IndexedDB |
 | Challenge page (`assets/challenge.html`) | themed (light/dark) + i18n (26 languages) |
 | Directives, config structs, inheritance merge | compiles + `nginx -t` passes |
-| Module builds against nginx 1.31.3 & loads (glibc + musl, amd64 + arm64) | module-build + nginx-smoke green for every libc×arch |
+| Mainline 1.31.7 and stable 1.30.6 module builds | native glibc/amd64 load and live suites passed; full libc/arch CI configured |
 | ACCESS handler + phase registration | handler runs (registered in `postconfiguration`) |
 | `/.pow/` endpoints — challenge JSON, solver, **async `POST /verify` body** | served correctly in the live test |
 | Response I/O — challenge page, JSON, `Set-Cookie`, `204` | written via the `ngx` output chain |

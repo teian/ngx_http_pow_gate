@@ -1,62 +1,87 @@
-//! The clearance token: proof a client already solved a challenge.
-//!
-//! Format (a cookie value):
-//!
-//! ```text
-//!   <payload_b64> "." <tag_b64>
-//!   payload_b64 = base64url(JSON{ pk, iat, exp })
-//!   tag_b64     = base64url(HMAC-SHA256(key, payload_b64))
-//! ```
-//!
-//! `pk` is the client's public key (base64url SEC1) so the per-request
-//! [`crate::proof`] can be checked against it. The HMAC makes the token
-//! unforgeable; verification is constant-time and enforces expiry.
+//! Protocol v2 clearance. Domain-separated HMAC authenticates version, public
+//! key, opaque client/policy binding, assurance and lifetime. Legacy cookies are
+//! deliberately rejected: they contain none of these client/policy guarantees.
 
 use crate::codec::{b64url, unb64url};
+use crate::context::Assurance;
 use crate::mac::{ct_eq, hmac};
 
-/// Decoded clearance payload.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Clearance {
-    /// Client public key, base64url SEC1 (uncompressed) — binds the token to a key.
+    pub version: u8,
     pub pk: String,
-    /// Issued-at, unix seconds.
+    pub context: String,
+    pub assurance: Assurance,
     pub iat: i64,
-    /// Expiry, unix seconds (`iat + clearance_ttl`).
     pub exp: i64,
 }
 
 impl Clearance {
-    /// Raw SEC1 public-key bytes, for [`crate::proof::verify`].
     pub fn pk_bytes(&self) -> Option<Vec<u8>> {
         unb64url(&self.pk)
     }
 }
 
-/// Mint a clearance token for `pk_sec1` (raw SEC1 public key bytes).
-pub fn issue(key: &[u8], pk_sec1: &[u8], iat: i64, ttl: i64) -> String {
+fn mac_input(payload: &str) -> Vec<u8> {
+    format!("pow-gate-clearance-v2|{payload}").into_bytes()
+}
+
+pub fn issue(
+    key: &[u8],
+    pk_sec1: &[u8],
+    context: &str,
+    assurance: Assurance,
+    iat: i64,
+    ttl: i64,
+) -> String {
     let payload = Clearance {
+        version: 2,
         pk: b64url(pk_sec1),
+        context: context.to_owned(),
+        assurance,
         iat,
         exp: iat + ttl,
     };
     let payload_b64 = b64url(&serde_json::to_vec(&payload).expect("serialize"));
-    let tag = b64url(&hmac(key, payload_b64.as_bytes()));
+    let tag = b64url(&hmac(key, &mac_input(&payload_b64)));
     format!("{payload_b64}.{tag}")
 }
 
-/// Verify a clearance token. Returns the payload only when the HMAC is authentic
-/// (constant-time) and `exp` is still in the future.
-pub fn verify(key: &[u8], token: &str, now: i64) -> Option<Clearance> {
+pub fn verify(
+    key: &[u8],
+    token: &str,
+    context: &str,
+    required: Assurance,
+    now: i64,
+    max_age: i64,
+) -> Option<Clearance> {
+    if token.len() > 4096 {
+        return None;
+    }
     let (payload_b64, tag_b64) = token.split_once('.')?;
-    let expected = hmac(key, payload_b64.as_bytes());
-    let provided = unb64url(tag_b64)?;
-    if !ct_eq(&expected, &provided) {
+    let expected = hmac(key, &mac_input(payload_b64));
+    if !ct_eq(&expected, &unb64url(tag_b64)?) {
         return None;
     }
     let payload: Clearance = serde_json::from_slice(&unb64url(payload_b64)?).ok()?;
-    if payload.exp <= now {
+    if payload.version != 2
+        || !ct_eq(payload.context.as_bytes(), context.as_bytes())
+        || !payload.assurance.satisfies(required)
+        || payload.exp <= now
+        || payload.iat > now
+        || max_age <= 0
+        || now.checked_sub(payload.iat)? >= max_age
+    {
         return None;
+    }
+    // A PoW key was curve-validated at issuance; check its canonical shape
+    // without repeating curve parsing on cookie-only requests. No-JS clearances
+    // have no key, and cannot satisfy a PoW requirement.
+    let pk = payload.pk_bytes()?;
+    match payload.assurance {
+        Assurance::Pow { .. } if pk.len() != 65 || pk[0] != 4 => return None,
+        Assurance::NoJs { .. } if !pk.is_empty() => return None,
+        _ => {}
     }
     Some(payload)
 }

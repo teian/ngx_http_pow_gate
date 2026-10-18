@@ -26,6 +26,9 @@ pub const NOJS_GRACE: i64 = 120;
 pub struct Grant {
     /// Same-site return path (starts with `/`), redirected to after the wait.
     pub path: String,
+    pub context: String,
+    pub id: String,
+    pub version: u8,
     /// Issued-at, unix seconds.
     pub iat: i64,
     /// Minimum wait in seconds before the grant may be redeemed.
@@ -44,8 +47,8 @@ pub enum Verdict {
 }
 
 fn mac_input(payload_b64: &str) -> Vec<u8> {
-    let mut v = Vec::with_capacity(5 + payload_b64.len());
-    v.extend_from_slice(b"nojs|");
+    let mut v = Vec::with_capacity(8 + payload_b64.len());
+    v.extend_from_slice(b"nojs-v2|");
     v.extend_from_slice(payload_b64.as_bytes());
     v
 }
@@ -57,9 +60,18 @@ fn path_ok(path: &str) -> bool {
 
 /// Mint a grant for `path` with a `delay`-second minimum wait. An unsafe path
 /// degrades to `/` rather than failing — the client still gets challenged.
-pub fn issue(key: &[u8], path: &str, delay: i64, now: i64) -> String {
+pub fn issue(key: &[u8], path: &str, delay: i64, now: i64, context: &str) -> String {
+    let mut id = [0u8; 16];
+    getrandom::getrandom(&mut id).expect("OS RNG");
     let grant = Grant {
-        path: if path_ok(path) { path.to_string() } else { "/".to_string() },
+        context: context.to_owned(),
+        id: b64url(&id),
+        version: 2,
+        path: if path_ok(path) {
+            path.to_string()
+        } else {
+            "/".to_string()
+        },
         iat: now,
         delay,
     };
@@ -69,7 +81,10 @@ pub fn issue(key: &[u8], path: &str, delay: i64, now: i64) -> String {
 }
 
 /// Verify a grant. Constant-time MAC check, then expiry and minimum-wait.
-pub fn verify(key: &[u8], token: &str, now: i64) -> Verdict {
+pub fn verify(key: &[u8], token: &str, now: i64, context: &str) -> Verdict {
+    if token.len() > 8192 {
+        return Verdict::Bad;
+    }
     let Some((payload_b64, tag_b64)) = token.split_once('.') else {
         return Verdict::Bad;
     };
@@ -86,11 +101,14 @@ pub fn verify(key: &[u8], token: &str, now: i64) -> Verdict {
     let Ok(grant) = serde_json::from_slice::<Grant>(&raw) else {
         return Verdict::Bad;
     };
-    if !path_ok(&grant.path) || grant.delay < 0 {
+    if grant.version != 2
+        || !ct_eq(grant.context.as_bytes(), context.as_bytes())
+        || !path_ok(&grant.path)
+        || !(1..=30).contains(&grant.delay)
+        || grant.iat > now
+        || now.abs_diff(grant.iat) >= NOJS_GRACE as u64
+    {
         return Verdict::Bad;
-    }
-    if now >= grant.iat + NOJS_GRACE {
-        return Verdict::Bad; // stale grant: full re-challenge
     }
     if now < grant.iat + grant.delay {
         return Verdict::TooEarly(grant);

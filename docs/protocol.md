@@ -1,158 +1,98 @@
-# Protocol reference: the `/.pow/` endpoints
+# Protocol v2: the `/.pow/` endpoints
 
-The wire contract between the browser solver and the module. Everything here is
-served under `pow_gate_endpoint` (default `/.pow/`). Use this when implementing or
-replacing the solver, or debugging the handshake.
-
-- [Endpoints](#endpoints)
-- [`GET {endpoint}challenge`](#get-endpointchallenge)
-- [`GET {endpoint}solver.js`](#get-endpointsolverjs)
-- [`POST {endpoint}verify`](#post-endpointverify)
-- [The captured request (`pow-replay`)](#the-captured-request-pow-replay)
-- [Token formats](#token-formats)
-- [The per-request proof](#the-per-request-proof)
-- [Full message sequence](#full-message-sequence)
-- [Error handling](#error-handling)
-
-> These formats are **implemented and exercised** by the live e2e test: the engine
-> (`src/pow-gate-core`) and `assets/solver.js` speak exactly this contract — the
-> JSON field names below are the wire format the module emits and accepts.
-
----
+The embedded solver and module must be upgraded together. V1 challenges and
+clearance cookies are rejected. Documented solver template URLs receive a
+module-version query during rendering to bypass cached legacy solvers. All PoW keys use canonical 65-byte uncompressed
+SEC1 P-256 encoding; signatures are WebCrypto's 64-byte raw `r || s` ECDSA/SHA-256.
 
 ## Endpoints
 
-| Method | Path                  | Purpose                                  | Handler                            |
-| ------ | --------------------- | ---------------------------------------- | ---------------------------------- |
-| `GET`  | `{endpoint}challenge` | Issue fresh PoW parameters               | `engine::pow::issue_challenge`     |
-| `GET`  | `{endpoint}solver.js` | Serve the browser solver                 | `challenge::serve_solver`          |
-| `POST` | `{endpoint}verify`    | Submit a solution, receive clearance     | `engine::pow::verify_solution`     |
-| `GET`  | `{endpoint}pass`      | Redeem a no-JS meta-refresh grant        | `engine::nojs::pass`               |
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `{endpoint}challenge` | Issue a key-bound challenge |
+| GET / HEAD | `{endpoint}solver.js` | Embedded protocol client |
+| POST | `{endpoint}verify` | Authenticate and atomically redeem a solution |
+| GET | `{endpoint}pass` | Atomically redeem a no-JS grant |
 
-Routing is in [`src/challenge.rs`](../src/ngx-http-pow-gate/src/challenge.rs) (`route_internal`). These
-paths are owned by the module regardless of your `location` blocks.
+Unsupported methods return 405. Endpoints must resolve to the same policy and
+configuration as the protected content. For a different location's difficulty,
+configure a matching endpoint inside that location (for example
+`pow_gate_endpoint /search/.pow/;` on `/search/`). A weaker endpoint cannot mint a
+clearance that satisfies the stronger location.
 
----
+## GET {endpoint}challenge
 
-## `GET {endpoint}challenge`
+Generate/load the client's keypair first. Send its public key in
+`X-Pow-Key: <base64url SEC1>`. Missing/malformed keys return 400.
 
-Returns the parameters for one proof-of-work attempt.
-
-**Response** `200 application/json`:
-
-```json
-{
-  "salt": "hex-random-per-request",
-  "exp": 1718450000,
-  "difficulty": 50000,
-  "token": "b64url-hmac-over-salt-exp-difficulty"
-}
-```
-
-| Field        | Meaning                                                                       |
-| ------------ | ----------------------------------------------------------------------------- |
-| `salt`       | Per-request random (hex).                                                     |
-| `exp`        | Unix seconds. Solutions submitted after this are rejected (anti-precompute).  |
-| `difficulty` | Expected hash count for THIS client — the configured value, or the `challenge:<N>`/`challenge:js` decision override. |
-| `token`      | HMAC binding `salt`+`exp`+`difficulty` to the server (opaque to the client).  |
-
-The client derives `target = 2^256 / difficulty` itself and searches a nonce
-with `SHA-256(salt + nonce) < target`. The client does **not** choose the
-difficulty: it echoes it to `/verify`, but the `token` HMAC-binds the exact
-value issued — echoing anything else fails verification.
-
-The token being HMAC-bound and short-lived is what stops an attacker from
-farming challenges out to a solver pool or precomputing solutions.
-
----
-
-## `GET {endpoint}solver.js`
-
-Serves [`assets/solver.js`](../assets/solver.js) (embedded in the module via
-`include_bytes!`). `200 text/javascript`, cacheable. The challenge page references
-it with the difficulty and endpoint as data-attributes:
-
-```html
-<script src="{{endpoint}}solver.js"
-        data-difficulty="{{difficulty}}"
-        data-endpoint="{{endpoint}}" defer></script>
-```
-
-The solver reads those attributes, runs the loop, and updates the page's hook
-elements (`#pow-status`, `#pow-progress`, `#pow-percent`, `#pow-error`).
-
----
-
-## `POST {endpoint}verify`
-
-Submits a found nonce plus the client's public key.
-
-**Request** `application/json`:
+Response: `200 application/json`, `Cache-Control: no-store`:
 
 ```json
 {
-  "salt": "<from /challenge>",
-  "exp": 1718450000,
-  "token": "<from /challenge>",
-  "nonce": 482193,
-  "pubkey": "<base64url SEC1 uncompressed P-256 public key>",
-  "difficulty": 50000
+  "version": 2,
+  "salt": "random-16-byte-hex",
+  "exp": 1792302000,
+  "difficulty": 500000,
+  "token": "base64url-authentication-tag"
 }
 ```
 
-`difficulty` is the value echoed from `/challenge`; it is authenticated by
-`token`, never trusted on its own. (A body without it verifies against the
-configured difficulty — correct whenever no decision override is in play.)
+The HMAC covers the domain-separated JSON tuple:
+`("pow-gate-challenge-v2", salt, exp, difficulty, base64url(public_key), context)`.
+The context streams length-prefixed fields into an HMAC: canonical client
+address/network, exact User-Agent,
+address-prefix policy, cookie domain (or normalized request host), cookie name,
+cookie path, endpoint, `pow_gate_policy`, and the shared replay store's issuer ID.
+Raw addresses and User-Agents are not embedded in tokens.
 
-**Server checks (all must pass):**
+Find `nonce` such that `SHA256(utf8(salt) || utf8(decimal_nonce))` is below
+`floor(2^256 / difficulty)`. Challenges expire after 120 seconds. Expiry prevents
+long-term precomputation, but cannot prevent a client outsourcing computation.
 
-1. `token` is the HMAC we issued over exactly this `salt`+`exp`+`difficulty`,
-   and `exp` is in the future.
-2. `SHA-256(salt ‖ nonce) < 2^256 / difficulty`.
-3. `pubkey` decodes (base64url).
+## POST {endpoint}verify
 
-**Response on success** `204 No Content`:
+Send JSON (maximum 8192 bytes):
 
+```json
+{
+  "version": 2,
+  "salt": "from-challenge",
+  "exp": 1792302000,
+  "difficulty": 500000,
+  "token": "from-challenge",
+  "nonce": 12345,
+  "pubkey": "base64url-public-key-committed-at-issuance",
+  "signature": "base64url-raw-ecdsa-signature"
+}
 ```
-Set-Cookie: pow_clearance=<payload>.<tag>; Path=/; Max-Age=43200; SameSite=Lax; Secure; HttpOnly
-```
 
-The cookie **name and attributes are configurable** via the `pow_gate_cookie_*`
-directives (`name`, `domain`, `path`, `samesite`, `secure`, `httponly`); `Max-Age`
-tracks `pow_gate_clearance_ttl`. The line above shows the defaults. See
-[configuration.md › Clearance-cookie directives](configuration.md#clearance-cookie-directives)
-and [`engine::clearance::build_set_cookie`](../src/ngx-http-pow-gate/src/engine/clearance.rs).
+Sign the exact UTF-8 string `pow-gate-redeem-v2 <token>` with the committed
+private key. All fields are required. Verification checks version, public key,
+current client/policy context, exact current issuing difficulty, HMAC, expiry,
+PoW and key possession. Only then does it atomically consume the challenge token.
+The ledger key excludes the solution nonce: another valid nonce cannot redeem
+that challenge again. Invalid submissions never consume a valid challenge.
 
-**Response on failure** `400` (bad solution / expired / malformed) — the solver
-reveals `#pow-error` and offers a retry.
+| Outcome | Status |
+| --- | --- |
+| Accepted; clearance in Set-Cookie | 204 |
+| Invalid key, signature, binding, token, solution or expiry | 400 |
+| Challenge already redeemed | 409 |
+| Body exceeds 8192 bytes (declared or streamed) | 413 |
+| Signing key/store unavailable or replay table saturated | 503 |
 
-After a `204`, the solver calls `location.reload()`; the reloaded request carries
-the cookie and a fresh per-request proof, and the gate lets it through.
+A request-body filter rejects oversized decoded chunks before nginx buffers or
+spools them. A second bounded collector protects the JSON parsing buffer.
+Verification responses that mint cookies carry `Cache-Control: no-store`.
 
----
+## GET {endpoint}pass
 
-## `GET {endpoint}pass` (no-JS flow)
-
-The redeem endpoint behind `challenge:nojs` decisions. The no-JS challenge page
-(`assets/challenge-nojs.html` or `pow_gate_nojs_page`) meta-refreshes to
-`{endpoint}pass?t=<grant>` after the configured delay. The grant is
-`base64url(JSON{path, iat, delay}) "." base64url(HMAC(key, "nojs|" + payload))`
-— domain-separated from the clearance format, one-shot in effect (it expires
-`nojs::NOJS_GRACE` = 120 s after issuance).
-
-| Grant state                     | Response                                                     |
-| ------------------------------- | ------------------------------------------------------------ |
-| authentic, waited ≥ `delay`     | `302` to the original path + clearance `Set-Cookie`          |
-| authentic, redeemed too early   | `200` — the no-JS page again with a **fresh** grant (wait restarts) |
-| forged / expired / malformed    | `302 /` (falls back into whatever challenge the decision assigns) |
-
-The minted clearance carries an **empty** public key — a no-JS client cannot
-sign per-request proofs — so under `pow_gate_require_proof on` its fetch/XHR
-requests would be challenged (moot for text browsers). Handlers:
-[`engine::nojs::pass`](../src/ngx-http-pow-gate/src/engine/nojs.rs),
-[`pow_gate_core::nojs`](../src/pow-gate-core/src/nojs.rs).
-
----
+No-JS grants bind a random ID, context, version 2, return path, issue time and
+minimum wait using the separate `nojs-v2|` HMAC domain. They expire after 120
+seconds. Redemption requires the current no-JS policy/delay, matching client
+context and an unused token. Too-early requests receive a fresh wait page;
+accepted requests set a bound no-JS clearance and redirect to the signed return
+path. Reuse returns 409. A no-JS clearance never satisfies a PoW policy.
 
 ## The captured request (`pow-replay`)
 
@@ -197,105 +137,48 @@ anyway. See [`core/replay.rs`](../src/pow-gate-core/src/replay.rs).
 
 ---
 
-## Token formats
+## Clearance cookies
 
-### Clearance cookie (default name `pow_clearance`, set via `pow_gate_cookie_name`)
+The cookie value is `base64url(JSON) + "." + base64url(tag)`, where the tag is
+`HMAC-SHA256(key, "pow-gate-clearance-v2|" + base64url(JSON))`.
 
-```
-<cookie_name> = base64url(payload) "." base64url(HMAC-SHA256(key, payload))
-```
+| Field | Meaning |
+| --- | --- |
+| version | Exactly 2 |
+| pk | Committed public key; empty only for no-JS grants |
+| context | Opaque client/policy/store binding |
+| assurance | `{ "kind": "pow", "difficulty": N }` or `{ "kind": "no_js", "delay": S }` |
+| iat, exp | Issued-at and expiry, in Unix seconds |
 
-`payload` (compact JSON — see [`pow_gate_core::clearance::Clearance`](../src/pow-gate-core/src/clearance.rs)):
+A clearance must match the current context and assurance type, and meet or exceed
+the current difficulty/delay. Its issue time cannot be in the future. Both its
+embedded expiry and the location's current `pow_gate_clearance_ttl` are enforced,
+so reducing TTL also restricts existing cookies. Changing `pow_gate_policy`
+invalidates existing clearances for that scope.
 
-| Field | Purpose                                                                  |
-| ----- | ------------------------------------------------------------------------ |
-| `pk`  | Client public key (base64url SEC1) — binds the cookie to the proof key. Empty for no-JS clearances (they cannot sign proofs). |
-| `iat` | Issued-at, unix seconds.                                                 |
-| `exp` | `iat + pow_gate_clearance_ttl`.                                          |
+## Per-request proofs and limits
 
-Verified in [`src/engine/clearance.rs`](../src/ngx-http-pow-gate/src/engine/clearance.rs):
-constant-time tag comparison (`subtle`), expiry check, then proof check.
+`X-Pow-Proof: <base64url-signature>.<unix-seconds>` signs the exact UTF-8 message
+`<METHOD> <nginx-normalized-path> <unix-seconds>`. Present proofs are always
+verified against the clearance's public key and `pow_gate_proof_skew`.
 
-Cookie attributes default to `HttpOnly` (no JS read), `Secure` (HTTPS only),
-`SameSite=Lax`, `Path=/`, host-only, `Max-Age` = the clearance TTL — each
-overridable with the `pow_gate_cookie_*` directives.
+With `pow_gate_require_proof on`, absent proofs fail for fetch/XHR
+(`Sec-Fetch-Dest: empty`). Navigations/tag loads still use the context-bound
+cookie, because browsers cannot attach arbitrary headers to those loads.
+Fetch metadata is client-controlled outside browsers: this option is not a
+universal key-possession guarantee. Clients sharing an allowed address/network
+and User-Agent can still copy bearer cookies; cooperating clients can also share
+private keys. PoW and rate limiting remain necessary.
 
----
+## Worker coordination and deployment
 
-## The per-request proof
-
-The cookie proves *work was done*; the proof proves *this is the same client now*.
-On every gated `fetch()` after clearance (the only request kind that can carry a
-custom header — see `pow_gate_require_proof` in
-[configuration.md](configuration.md)), the client sends:
-
-```
-X-Pow-Proof: base64url( sign_privkey( H( method | path | timestamp ) ) ) . <timestamp>
-```
-
-The server ([`src/pow-gate-core/src/proof.rs`](../src/pow-gate-core/src/proof.rs)):
-
-1. Reconstructs `H(method | path | timestamp)` from the request line.
-2. Checks `|now − timestamp| ≤ pow_gate_proof_skew`.
-3. Verifies the signature against the public key whose thumbprint is in the
-   clearance cookie.
-
-```mermaid
-flowchart LR
-    cookie[pow_clearance cookie] -->|pubkey_thumbprint| match{thumbprint match?}
-    header[X-Pow-Proof header] -->|signature + ts| sig{sig valid & ts fresh?}
-    match --> ok{both pass?}
-    sig --> ok
-    ok -- yes --> allow[/NGX_DECLINED → upstream/]
-    ok -- no --> chal[/challenge again/]
-```
-
-This is the [DPoP](https://www.rfc-editor.org/rfc/rfc9449) pattern: a bearer
-token (the cookie) bound to proof-of-possession of a private key. Stealing the
-cookie is useless without the key; capturing one proof is useless after
-`pow_gate_proof_skew` seconds.
-
----
-
-## Full message sequence
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant B as Browser (solver.js)
-    participant M as nginx + pow_gate
-    B->>M: GET /            (no cookie)
-    M-->>B: 200 challenge.html
-    B->>M: GET /.pow/solver.js
-    M-->>B: 200 solver.js
-    B->>M: GET /.pow/challenge
-    M-->>B: 200 { salt, target, expires_at }
-    Note over B: keygen P-256;<br/>nonce: SHA256(salt‖nonce) < target
-    B->>M: POST /.pow/verify { salt, nonce, pubkey }
-    alt solution valid & unexpired
-        M-->>B: 204 Set-Cookie: pow_clearance
-        B->>M: GET / (Cookie + X-Pow-Proof)
-        M-->>B: 200 upstream content
-    else invalid / expired
-        M-->>B: 400
-        Note over B: show #pow-error, retry from /challenge
-    end
-```
-
----
-
-## Error handling
-
-| Condition                              | Response | Client behaviour                         |
-| -------------------------------------- | -------- | ---------------------------------------- |
-| `/verify` solution wrong/expired       | `400`    | Show `#pow-error`, restart from challenge |
-| Clearance cookie HMAC fails            | (no pass)| Re-challenged on the next request         |
-| Clearance expired                      | (no pass)| Re-challenged; solver runs again          |
-| Clearance expired on a `POST`          | page + `pow-replay` | Solver re-issues the request after clearing |
-| Proof missing / stale / bad signature  | (no pass)| Re-challenged                             |
-| `deny` decision                        | `403`    | No challenge; hard stop                   |
-| JS disabled                            | page only| Cannot complete — use `allow`/exclusions  |
-
-Re-challenge is graceful: an expired clearance just sends the next request back
-to the challenge page, the solver runs, and the client is cleared again — no hard
-error for the user.
+A fixed 2 MiB nginx shared-memory zone stores at most 32,768 live challenge
+redemptions. It uses the nginx process-shared mutex, checks at most 64 slots per
+operation, reuses expired slots and never evicts a live entry. Saturation returns
+503, including when a probe window fills before the theoretical slot limit.
+Both JS and no-JS redemption use this ledger. No per-client heap table grows in
+workers. Graceful reloads preserve the zone, issuer identity, spent challenges
+and cookies. Full restarts generate a fresh issuer, invalidating old tokens.
+Independent nginx instances have different issuers and reject each other's
+tokens even with the same HMAC key. See [security.md](security.md) for the proposed
+Redis coordination mechanism for clusters; Redis is not implemented yet.

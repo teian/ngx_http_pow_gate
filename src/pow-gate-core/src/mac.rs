@@ -12,6 +12,17 @@ pub fn hmac(key: &[u8], msg: &[u8]) -> [u8; 32] {
     m.finalize().into_bytes().into()
 }
 
+/// Authenticate a framed sequence without building a serialized message buffer.
+/// Eight-byte lengths make field boundaries unambiguous even for attacker input.
+pub fn hmac_fields(key: &[u8], fields: &[&[u8]]) -> [u8; 32] {
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
+    for field in fields {
+        mac.update(&(field.len() as u64).to_be_bytes());
+        mac.update(field);
+    }
+    mac.finalize().into_bytes().into()
+}
+
 /// Constant-time equality. Returns `false` on length mismatch (lengths are not
 /// secret here, so an early return is fine).
 pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {

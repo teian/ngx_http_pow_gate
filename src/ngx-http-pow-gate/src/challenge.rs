@@ -34,21 +34,27 @@ use crate::runtime::Cfg;
 // so embed them via CARGO_MANIFEST_DIR to stay correct regardless of build CWD.
 
 /// Embedded fallback so the module works with zero config (no `pow_gate_page`).
-pub const DEFAULT_PAGE: &[u8] =
-    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/challenge.html"));
+pub const DEFAULT_PAGE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/challenge.html"
+));
 
 /// The solver, always served by the module at `{endpoint}solver.js`. Compiled in
 /// because it is the client half of the proof-of-work protocol and must match the
 /// engine; it is not operator-configurable.
-pub const SOLVER_JS: &[u8] =
-    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/solver.js"));
+pub const SOLVER_JS: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/solver.js"
+));
 
 /// Embedded no-JS (meta-refresh) challenge page, served on `challenge:nojs`
 /// decisions. Overridable with `pow_gate_nojs_page`. Placeholders
 /// (`{{pass_url}}`, `{{delay}}`) are substituted **per request** — the grant
 /// token in the pass URL is one-shot — so only the raw template is cached.
-pub const DEFAULT_NOJS_PAGE: &[u8] =
-    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/challenge-nojs.html"));
+pub const DEFAULT_NOJS_PAGE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/challenge-nojs.html"
+));
 
 /// Load + cache the challenge page bytes for a location.
 ///
@@ -80,6 +86,19 @@ pub fn load_page(
         }
     };
 
+    // Protocol upgrades must not run a previously cached solver. This covers
+    // the embedded page and existing custom templates using the documented src.
+    let versioned = format!("{{{{endpoint}}}}solver.js?v={}", env!("CARGO_PKG_VERSION"));
+    let raw = replace_all(
+        &raw,
+        b"{{endpoint}}solver.js\"",
+        format!("{versioned}\"").as_bytes(),
+    );
+    let raw = replace_all(
+        &raw,
+        b"{{endpoint}}solver.js'",
+        format!("{versioned}'").as_bytes(),
+    );
     let rendered = replace_all(&raw, b"{{difficulty}}", difficulty.to_string().as_bytes());
     let rendered = replace_all(&rendered, b"{{endpoint}}", unsafe { as_bytes(&endpoint) });
 
@@ -89,7 +108,10 @@ pub fn load_page(
             return None;
         }
         std::ptr::copy_nonoverlapping(rendered.as_ptr(), data, rendered.len());
-        Some(ngx_str_t { len: rendered.len(), data })
+        Some(ngx_str_t {
+            len: rendered.len(),
+            data,
+        })
     }
 }
 
@@ -116,17 +138,28 @@ pub fn load_nojs_page(cf: *mut ngx_conf_t, path: ngx_str_t) -> Option<ngx_str_t>
             return None;
         }
         std::ptr::copy_nonoverlapping(raw.as_ptr(), data, raw.len());
-        Some(ngx_str_t { len: raw.len(), data })
+        Some(ngx_str_t {
+            len: raw.len(),
+            data,
+        })
     }
 }
 
 /// Render + serve the no-JS challenge page: substitute the one-shot pass URL
 /// and the delay into the cached template. `Cache-Control: no-store` because
 /// the embedded grant is time-bound and per-request.
-pub fn serve_nojs_page(r: &mut Request, template: &ngx_str_t, pass_url: &str, delay: i64) -> Status {
+pub fn serve_nojs_page(
+    r: &mut Request,
+    template: &ngx_str_t,
+    pass_url: &str,
+    delay: i64,
+) -> Status {
     let raw = unsafe { as_bytes(template) };
-    let body = replace_all(&replace_all(raw, b"{{pass_url}}", pass_url.as_bytes()),
-                           b"{{delay}}", delay.to_string().as_bytes());
+    let body = replace_all(
+        &replace_all(raw, b"{{pass_url}}", pass_url.as_bytes()),
+        b"{{delay}}",
+        delay.to_string().as_bytes(),
+    );
     crate::response::send_and_finish_with_headers(
         r,
         HTTPStatus::OK,
@@ -175,14 +208,25 @@ pub fn route_internal(
     r: &mut Request,
     cfg: &Cfg,
     suffix: &str,
-    difficulty: u64,
+    required: pow_gate_core::context::Assurance,
     nojs_template: &ngx_str_t,
 ) -> Option<Status> {
+    let raw = r as *mut Request as *mut ngx::ffi::ngx_http_request_t;
+    let method = unsafe { as_str(&(*raw).method_name) };
+    let method_ok = match suffix {
+        "challenge" | "pass" => method == "GET",
+        "solver.js" => method == "GET" || method == "HEAD",
+        "verify" => method == "POST",
+        _ => true,
+    };
+    if !method_ok {
+        return Some(HTTPStatus::NOT_ALLOWED.into());
+    }
     match suffix {
-        "challenge" => Some(crate::engine::pow::issue_challenge(r, cfg, difficulty)),
+        "challenge" => Some(crate::engine::pow::issue_challenge(r, cfg, required)),
         "solver.js" => Some(serve_solver(r)),
         "verify" => Some(crate::engine::pow::verify_solution(r)),
-        "pass" => Some(crate::engine::nojs::pass(r, cfg, nojs_template)),
+        "pass" => Some(crate::engine::nojs::pass(r, cfg, nojs_template, required)),
         _ => None,
     }
 }
@@ -190,5 +234,11 @@ pub fn route_internal(
 /// Serve the solver: `200 OK`, `Content-Type: text/javascript`, body =
 /// [`SOLVER_JS`] (always the module-provided embedded solver).
 fn serve_solver(r: &mut Request) -> Status {
-    send_and_finish(r, HTTPStatus::OK, "text/javascript; charset=utf-8", SOLVER_JS, None)
+    send_and_finish(
+        r,
+        HTTPStatus::OK,
+        "text/javascript; charset=utf-8",
+        SOLVER_JS,
+        None,
+    )
 }

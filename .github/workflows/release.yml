@@ -29,31 +29,34 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        nginx: [mainline, stable]
+        libc: [debian, alpine]
+        arch: [amd64, arm64]
         include:
-          - { libc: debian, arch: amd64, suffix: glibc-amd64, runner: ubuntu-latest }
-          - { libc: debian, arch: arm64, suffix: glibc-arm64, runner: ubuntu-24.04-arm }
-          - { libc: alpine, arch: amd64, suffix: musl-amd64,  runner: ubuntu-latest }
-          - { libc: alpine, arch: arm64, suffix: musl-arm64,  runner: ubuntu-24.04-arm }
+          - { libc: debian, abi: glibc }
+          - { libc: alpine, abi: musl }
+          - { arch: amd64, runner: ubuntu-latest }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v5
-      - name: build A (${{ matrix.suffix }})
-        run: docker build -f docker/Dockerfile --target module-export-${{ matrix.libc }} --no-cache --output type=local,dest=out-a .
-      - name: build B (${{ matrix.suffix }}, independent)
-        run: docker build -f docker/Dockerfile --target module-export-${{ matrix.libc }} --no-cache --output type=local,dest=out-b .
+      - name: build A (${{ matrix.abi }}-${{ matrix.arch }})
+        run: ./scripts/build-nginx.sh ${{ matrix.nginx }} --target module-export-${{ matrix.libc }} --no-cache --output type=local,dest=out-a
+      - name: build B (${{ matrix.abi }}-${{ matrix.arch }}, independent)
+        run: ./scripts/build-nginx.sh ${{ matrix.nginx }} --target module-export-${{ matrix.libc }} --no-cache --output type=local,dest=out-b
       - name: compare hashes
         run: |
           sha256sum out-a/*.so out-b/*.so
           cmp out-a/ngx_http_pow_gate_module.so out-b/ngx_http_pow_gate_module.so \
-            || { echo "::error::module .so (${{ matrix.suffix }}) is not reproducible"; exit 1; }
+            || { echo "::error::module .so (${{ matrix.abi }}-${{ matrix.arch }}) is not reproducible"; exit 1; }
           # Artifact name carries both version axes: the module .so only loads
           # into the exact nginx version it was built against.
           MODULE_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' src/ngx-http-pow-gate/Cargo.toml)
-          NGINX_VERSION=$(sed -n 's/^ARG NGINX_VERSION=//p' docker/Dockerfile)
+          NGINX_VERSION=$(python3 scripts/nginx-versions.py ${{ matrix.nginx }} --version)
           cp out-a/ngx_http_pow_gate_module.so \
-            "ngx_http_pow_gate_module-${MODULE_VERSION}-nginx${NGINX_VERSION}-${{ matrix.suffix }}.so"
+            "ngx_http_pow_gate_module-${MODULE_VERSION}-nginx${NGINX_VERSION}-${{ matrix.abi }}-${{ matrix.arch }}.so"
       - uses: actions/upload-artifact@v4
         with:
-          name: module-${{ matrix.suffix }}
+          name: module-${{ matrix.nginx }}-${{ matrix.abi }}-${{ matrix.arch }}
           path: ngx_http_pow_gate_module-*.so
           if-no-files-found: error
 

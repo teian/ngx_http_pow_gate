@@ -16,18 +16,26 @@
 //! refresher threads start per worker in [`start_refreshers`] (threads don't
 //! survive nginx's fork).
 
+use crate::config::MainConf;
 use arc_swap::ArcSwap;
 use core::ffi::c_void;
 use ngx::core::{NGX_CONF_ERROR, NGX_CONF_OK};
-use ngx::ffi::{ngx_command_t, ngx_conf_parse, ngx_conf_t, ngx_str_t};
+use ngx::ffi::{
+    ngx_command_t, ngx_conf_parse, ngx_conf_t, ngx_cycle_t, ngx_http_conf_ctx_t, ngx_http_module,
+    ngx_pool_cleanup_add, ngx_str_t,
+};
 use pow_gate_core::ranges::IpRangeSet;
+use pow_gate_core::verdict_cache::{Lookup, VerdictCache};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::os::raw::c_char;
 use std::ptr;
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{
+    mpsc::{sync_channel, SyncSender},
+    Arc, Mutex, OnceLock, RwLock,
+};
 use std::time::{Duration, Instant};
 
 /// One configured verifier.
@@ -36,8 +44,7 @@ pub struct Verifier {
     pub urls: Vec<String>,
     pub refresh: Duration,
     pub fcrdns_suffixes: Vec<String>,
-    pub fcrdns_ttl: Duration,
-    verdicts: Mutex<HashMap<IpAddr, (bool, Instant)>>,
+    verdicts: Mutex<VerdictCache<IpAddr>>,
 }
 
 fn registry() -> &'static RwLock<HashMap<String, Arc<Verifier>>> {
@@ -46,7 +53,7 @@ fn registry() -> &'static RwLock<HashMap<String, Arc<Verifier>>> {
 }
 
 /// Does verifier `name` confirm `ip`? Hot path: lock-free range check, then a
-/// cached FCrDNS verdict. Never blocks (DNS happens in the background).
+/// cached FCrDNS verdict. Never waits for DNS (resolution happens in the background).
 pub fn verifier_allows(name: &str, ip: IpAddr) -> bool {
     let v = match registry().read().ok().and_then(|r| r.get(name).cloned()) {
         Some(v) => v,
@@ -62,11 +69,30 @@ pub fn verifier_allows(name: &str, ip: IpAddr) -> bool {
 }
 
 /// Start the per-worker background refreshers — call once from `init_process`.
-pub fn start_refreshers() {
-    if let Ok(reg) = registry().read() {
-        for v in reg.values() {
-            spawn_refresher(v.clone());
+pub fn start_refreshers(cycle: *mut ngx_cycle_t) {
+    // Configuration parsing never mutates the runtime registry in the master.
+    // A respawn after a FAILED reload must use its still-active cycle's policy.
+    let configured = unsafe {
+        let ctx =
+            *(*cycle).conf_ctx.add(ngx_http_module.index as usize) as *mut ngx_http_conf_ctx_t;
+        if ctx.is_null() {
+            return;
         }
+        let main = *(*ctx)
+            .main_conf
+            .add(crate::ngx_http_pow_gate_module.ctx_index as usize)
+            as *mut MainConf;
+        if main.is_null() || (*main).verifiers.is_null() {
+            HashMap::new()
+        } else {
+            (&*((*main).verifiers as *const HashMap<String, Arc<Verifier>>)).clone()
+        }
+    };
+    if let Ok(mut runtime) = registry().write() {
+        *runtime = configured.clone();
+    }
+    for verifier in configured.values() {
+        spawn_refresher(verifier.clone());
     }
 }
 
@@ -79,7 +105,12 @@ fn spawn_refresher(v: Arc<Verifier>) {
         for url in &v.urls {
             if let Ok(resp) = ureq::get(url).call() {
                 let mut buf = Vec::new();
-                if resp.into_reader().take(8 << 20).read_to_end(&mut buf).is_ok() {
+                if resp
+                    .into_reader()
+                    .take(8 << 20)
+                    .read_to_end(&mut buf)
+                    .is_ok()
+                {
                     set.add_feed_json(&buf);
                 }
             }
@@ -93,27 +124,78 @@ fn spawn_refresher(v: Arc<Verifier>) {
 
 // ─────────────────────────────── FCrDNS ──────────────────────────────────────
 
-fn fcrdns_cached(v: &Arc<Verifier>, ip: IpAddr) -> bool {
-    let now = Instant::now();
-    if let Ok(cache) = v.verdicts.lock() {
-        if let Some((verdict, t)) = cache.get(&ip) {
-            if now.duration_since(*t) < v.fcrdns_ttl {
-                return *verdict;
+const DNS_CACHE_ENTRIES: usize = 2048;
+const DNS_QUEUE_CAPACITY: usize = 64;
+const DNS_THREADS: usize = 2;
+const DNS_STACK_BYTES: usize = 512 * 1024;
+struct DnsJob {
+    verifier: Arc<Verifier>,
+    ip: IpAddr,
+    generation: u64,
+}
+
+fn dns_pool() -> Option<&'static SyncSender<DnsJob>> {
+    // Initialized lazily in a worker AFTER fork. Never create a thread per IP.
+    static POOL: OnceLock<Option<SyncSender<DnsJob>>> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let (sender, receiver) = sync_channel::<DnsJob>(DNS_QUEUE_CAPACITY);
+        let receiver = Arc::new(Mutex::new(receiver));
+        let mut workers = 0;
+        for _ in 0..DNS_THREADS {
+            let receiver = receiver.clone();
+            if std::thread::Builder::new()
+                .name("pow-fcrdns".into())
+                .stack_size(DNS_STACK_BYTES)
+                .spawn(move || loop {
+                    let job = match receiver.lock() {
+                        Ok(rx) => match rx.recv() {
+                            Ok(job) => job,
+                            Err(_) => return,
+                        },
+                        Err(_) => return,
+                    };
+                    // The receiver lock is released before blocking resolver IO.
+                    let ok = fcrdns_confirm(job.ip, &job.verifier.fcrdns_suffixes);
+                    if let Ok(mut cache) = job.verifier.verdicts.lock() {
+                        cache.complete(&job.ip, job.generation, ok, Instant::now());
+                    };
+                })
+                .is_ok()
+            {
+                workers += 1;
             }
         }
-    }
-    // Miss/stale: mark pending and resolve in the background; fail closed for now
-    // (the client just gets a normal challenge this once).
-    if let Ok(mut cache) = v.verdicts.lock() {
-        cache.insert(ip, (false, now));
-    }
-    let v = v.clone();
-    std::thread::spawn(move || {
-        let ok = fcrdns_confirm(ip, &v.fcrdns_suffixes);
-        if let Ok(mut cache) = v.verdicts.lock() {
-            cache.insert(ip, (ok, Instant::now()));
+        if workers > 0 {
+            Some(sender)
+        } else {
+            None
         }
+    })
+    .as_ref()
+}
+
+fn fcrdns_cached(v: &Arc<Verifier>, ip: IpAddr) -> bool {
+    let generation = match v.verdicts.lock() {
+        Ok(mut cache) => match cache.begin(ip, Instant::now()) {
+            Lookup::Cached(verdict) => return verdict,
+            Lookup::Full => return false,
+            Lookup::Start(id) => id,
+        },
+        Err(_) => return false,
+    };
+    let queued = dns_pool().is_some_and(|pool| {
+        pool.try_send(DnsJob {
+            verifier: v.clone(),
+            ip,
+            generation,
+        })
+        .is_ok()
     });
+    if !queued {
+        if let Ok(mut cache) = v.verdicts.lock() {
+            cache.cancel(&ip, generation);
+        }
+    }
     false
 }
 
@@ -141,13 +223,19 @@ unsafe fn ip_to_sockaddr(ip: IpAddr) -> (libc::sockaddr_storage, libc::socklen_t
             let sin = &mut *(&mut ss as *mut _ as *mut libc::sockaddr_in);
             sin.sin_family = libc::AF_INET as libc::sa_family_t;
             sin.sin_addr.s_addr = u32::from(a).to_be();
-            (ss, std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t)
+            (
+                ss,
+                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            )
         }
         IpAddr::V6(a) => {
             let sin6 = &mut *(&mut ss as *mut _ as *mut libc::sockaddr_in6);
             sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
             sin6.sin6_addr.s6_addr = a.octets();
-            (ss, std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t)
+            (
+                ss,
+                std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+            )
         }
     }
 }
@@ -159,7 +247,9 @@ unsafe fn sockaddr_to_ip(sa: *const libc::sockaddr) -> Option<IpAddr> {
     match (*sa).sa_family as i32 {
         libc::AF_INET => {
             let s = sa as *const libc::sockaddr_in;
-            Some(IpAddr::V4(Ipv4Addr::from(u32::from_be((*s).sin_addr.s_addr))))
+            Some(IpAddr::V4(Ipv4Addr::from(u32::from_be(
+                (*s).sin_addr.s_addr,
+            ))))
         }
         libc::AF_INET6 => {
             let s = sa as *const libc::sockaddr_in6;
@@ -231,7 +321,7 @@ struct Builder {
 pub extern "C" fn pow_gate_verifier_block(
     cf: *mut ngx_conf_t,
     _cmd: *mut ngx_command_t,
-    _conf: *mut c_void,
+    conf: *mut c_void,
 ) -> *mut c_char {
     unsafe {
         let name = match arg(cf, 1) {
@@ -257,7 +347,9 @@ pub extern "C" fn pow_gate_verifier_block(
         if !rv.is_null() && rv != NGX_CONF_OK {
             return rv;
         }
-        register(*b);
+        if !register(*b, cf, conf as *mut MainConf) {
+            return NGX_CONF_ERROR;
+        }
         NGX_CONF_OK
     }
 }
@@ -305,18 +397,34 @@ extern "C" fn verifier_inner(
     }
 }
 
-fn register(b: Builder) {
+unsafe fn register(b: Builder, cf: *mut ngx_conf_t, main: *mut MainConf) -> bool {
     let v = Arc::new(Verifier {
         ranges: ArcSwap::from_pointee(IpRangeSet::new()),
         urls: b.urls,
         refresh: b.refresh,
         fcrdns_suffixes: b.suffixes,
-        fcrdns_ttl: b.fcrdns_ttl,
-        verdicts: Mutex::new(HashMap::new()),
+        verdicts: Mutex::new(VerdictCache::new(DNS_CACHE_ENTRIES, b.fcrdns_ttl)),
     });
-    if let Ok(mut reg) = registry().write() {
-        reg.insert(b.name, v);
+    if main.is_null() {
+        return false;
     }
+    if (*main).verifiers.is_null() {
+        let cleanup = ngx_pool_cleanup_add((*cf).pool, 0);
+        if cleanup.is_null() {
+            return false;
+        }
+        let map = Box::into_raw(Box::new(HashMap::<String, Arc<Verifier>>::new()));
+        (*main).verifiers = map.cast();
+        (*cleanup).data = map.cast();
+        (*cleanup).handler = Some(drop_configured);
+    }
+    let map = &mut *((*main).verifiers as *mut HashMap<String, Arc<Verifier>>);
+    map.insert(b.name, v);
+    true
+}
+
+unsafe extern "C" fn drop_configured(data: *mut c_void) {
+    drop(Box::from_raw(data as *mut HashMap<String, Arc<Verifier>>));
 }
 
 /// Read `cf->args->elts[i]` as an owned `String`.

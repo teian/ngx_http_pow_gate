@@ -25,9 +25,11 @@
 #![allow(non_camel_case_types)]
 
 mod access;
+mod body_limit;
 mod challenge;
 mod config;
 mod engine;
+mod redemption;
 mod replay;
 mod response;
 mod runtime;
@@ -38,7 +40,9 @@ use ngx::ffi::{
 };
 
 // Re-export the pieces nginx links against by symbol.
-use config::{create_location_conf, create_main_conf, merge_location_conf, NGX_HTTP_POW_GATE_COMMANDS};
+use config::{
+    create_location_conf, create_main_conf, merge_location_conf, NGX_HTTP_POW_GATE_COMMANDS,
+};
 
 /// HTTP module context. nginx calls these at configuration time. (The struct
 /// field names below — `create_loc_conf`, `merge_loc_conf` — are nginx's own ABI
@@ -106,5 +110,10 @@ pub static mut ngx_http_pow_gate_module: ngx_module_t = ngx_module_t {
 /// Registering here (rather than per-location) keeps a single handler that reads
 /// the merged [`config::LocationConf`] for the matched location at request time.
 extern "C" fn postconfiguration(cf: *mut ngx::ffi::ngx_conf_t) -> ngx_int_t {
+    let rc = unsafe { redemption::configure(cf) };
+    if rc != ngx::core::Status::NGX_OK.0 as ngx_int_t {
+        return rc;
+    }
+    unsafe { body_limit::install() };
     access::install_access_handler(cf)
 }

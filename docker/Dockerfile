@@ -29,10 +29,10 @@ ARG REGISTRY=mirror.gcr.io/library
 ARG RUST_VERSION=1.95
 ARG RUST_TRIXIE_DIGEST=sha256:f49565f188ee00bc2a18dd418183f2c5f23ef7d6e691890517ed341a598f67c3
 ARG RUST_ALPINE_DIGEST=sha256:606fd313a0f49743ee2a7bd49a0914bab7deedb12791f3a846a34a4711db7ed2
-ARG NGINX_VERSION=1.31.3
-ARG NGINX_DEBIAN_DIGEST=sha256:8b1903d1d65ca63882c3c567da1b77181863bbb9b2499859c7dea2b9ab3a4795
-ARG NGINX_ALPINE_DIGEST=sha256:2776cd5b70d8983e27e9f5c90abee3d24c690014ae8ecbb529572d954a459096
-ARG NGINX_SHA256=a7657c50811c2d92d9895395e8b873ef60398142c4db21eb647811c38f6dd525
+ARG NGINX_VERSION=1.31.7
+ARG NGINX_DEBIAN_DIGEST=sha256:6c3fee1d7a4686ea271e9cc60d9c741cdfbc44ecf11d343025e1cff4c5522f47
+ARG NGINX_ALPINE_DIGEST=sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d
+ARG NGINX_SHA256=89ea8a3dc171511f7325043b50e4c036248d9fad5feb7ec809c0b82d5df42c65
 
 # Determinism knobs shared by both module builds: a fixed epoch, no incremental
 # artifacts, C locale/UTC, a single codegen unit (removes parallel-codegen
@@ -79,6 +79,16 @@ RUN set -eux; \
     cargo build --release -p ngx-http-pow-gate; \
     cp target/release/libngx_http_pow_gate.so /ngx_http_pow_gate_module.so
 
+# Failed reloads must not change the verifier policy inherited by respawned
+# workers. Build the matching nginx executable and exercise this unprivileged.
+FROM module-build-debian AS security-reload
+ARG NGINX_VERSION
+RUN apt-get update && apt-get install -y --no-install-recommends python3 procps util-linux \
+    && rm -rf /var/lib/apt/lists/*
+RUN make -C "/tmp/nginx-${NGINX_VERSION}" -j2
+RUN runuser -u nobody -- python3 /src/tests/pow-clearance/reload-test.py \
+      /tmp/nginx-${NGINX_VERSION}/objs/nginx /ngx_http_pow_gate_module.so
+
 # ──────────────────────── 2b. build the module (Alpine) ──────────────────────
 FROM ${REGISTRY}/rust:${RUST_VERSION}-alpine@${RUST_ALPINE_DIGEST} AS module-build-alpine
 ARG NGINX_VERSION
@@ -123,11 +133,18 @@ FROM scratch AS module-export-alpine
 COPY --from=module-build-alpine /ngx_http_pow_gate_module.so /ngx_http_pow_gate_module.so
 
 # ──────────────────────── 3. nginx load smoke (per libc) ──────────────────────
+FROM ${REGISTRY}/rust:${RUST_VERSION}-trixie@${RUST_TRIXIE_DIGEST} AS test-tls
+RUN apt-get update && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/*
+COPY scripts/test-tls.sh /test-tls.sh
+RUN bash /test-tls.sh /test-tls
+
 # Shared config + fixtures, parameterised only by which base image / .so. The
 # 32-byte key is world-readable (644) ONLY because this test container's nginx
 # worker may run unprivileged and the gate fails closed if it can't read the key.
 # Production guidance stays 600 + `chown nginx` (see docs/configuration.md).
 FROM ${REGISTRY}/nginx:${NGINX_VERSION}@${NGINX_DEBIAN_DIGEST} AS nginx-smoke-debian
+COPY --from=test-tls /test-tls /etc/pow/test-tls
 COPY --from=module-build-debian /ngx_http_pow_gate_module.so /etc/nginx/modules/ngx_http_pow_gate_module.so
 COPY docker/nginx.test.conf /etc/nginx/nginx.conf
 RUN install -d -m 755 /etc/pow && head -c 32 /dev/urandom > /etc/pow/hmac.key && chmod 644 /etc/pow/hmac.key
@@ -145,6 +162,7 @@ COPY docker/www/posted.html /var/www/posted.html
 RUN nginx -t
 
 FROM ${REGISTRY}/nginx:${NGINX_VERSION}-alpine@${NGINX_ALPINE_DIGEST} AS nginx-smoke-alpine
+COPY --from=test-tls /test-tls /etc/pow/test-tls
 COPY --from=module-build-alpine /ngx_http_pow_gate_module.so /etc/nginx/modules/ngx_http_pow_gate_module.so
 COPY docker/nginx.test.conf /etc/nginx/nginx.conf
 RUN install -d -m 755 /etc/pow && head -c 32 /dev/urandom > /etc/pow/hmac.key && chmod 644 /etc/pow/hmac.key
@@ -161,14 +179,18 @@ RUN nginx -t
 # uses). Run it against a live nginx via docker-compose.test.yml. The client is
 # libc-agnostic; it exercises whichever nginx (glibc/musl) it's pointed at.
 FROM ${REGISTRY}/rust:${RUST_VERSION}-trixie@${RUST_TRIXIE_DIGEST} AS e2e
-RUN apt-get update && apt-get install -y --no-install-recommends libssl-dev pkg-config ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends libssl-dev pkg-config ca-certificates nodejs python3 python3-venv \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY src/pow-gate-core/ src/pow-gate-core/
 COPY tests/integration/ tests/integration/
+COPY tests/pow-clearance/ tests/pow-clearance/
+RUN python3 -m venv /opt/http3 && /opt/http3/bin/pip install --no-cache-dir -r tests/pow-clearance/http3-requirements.txt
+COPY --from=test-tls /test-tls/cert.pem /test-tls/cert.pem
 RUN cd tests/integration && cargo build --release
 ENV BASE_URL=http://nginx:8080
-CMD ["/src/tests/integration/target/release/pow-gate-e2e"]
+ENV HTTP3_BASE_URL=https://nginx:8443
+CMD ["sh", "-c", "/src/tests/integration/target/release/pow-gate-e2e && node /src/tests/pow-clearance/security-test.mjs \"$BASE_URL\" && node /src/tests/pow-clearance/http2-test.mjs \"$BASE_URL\" && /opt/http3/bin/python /src/tests/pow-clearance/http3-test.py \"$HTTP3_BASE_URL\" --ca-file /test-tls/cert.pem"]
 
 # ───────────────────────────── 5. perf load client ───────────────────────────
 # Builds the load generator (docs/performance.md). Run against a live nginx via

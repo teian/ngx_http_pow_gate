@@ -30,8 +30,11 @@ const below = (hash, target) => {
   return false;
 };
 
+const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+const pubRaw = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
+
 // 1. challenge
-const ch = await (await fetch(`${BASE}/.pow/challenge`)).json();
+const ch = await (await fetch(`${BASE}/.pow/challenge`, { headers: { "X-Pow-Key": b64url(pubRaw), "User-Agent": "pow-solve-test" } })).json();
 if (!ch.salt || !ch.token) die(`challenge malformed: ${JSON.stringify(ch)}`);
 console.log(`ok    challenge issued (difficulty ${ch.difficulty})`);
 
@@ -48,12 +51,12 @@ for (;;) {
 console.log(`ok    solved: nonce=${nonce} in ${Date.now() - t0} ms`);
 
 // 3. keypair + verify
-const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
-const pubRaw = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
 const res = await fetch(`${BASE}/.pow/verify`, {
   method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ salt: ch.salt, exp: ch.exp, token: ch.token, nonce, pubkey: b64url(pubRaw), difficulty: ch.difficulty }),
+  headers: { "Content-Type": "application/json", "User-Agent": "pow-solve-test" },
+  body: JSON.stringify({ version: ch.version, signature: b64url(new Uint8Array(
+    await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, kp.privateKey,
+      enc.encode("pow-gate-redeem-v2 " + ch.token)))), salt: ch.salt, exp: ch.exp, token: ch.token, nonce, pubkey: b64url(pubRaw), difficulty: ch.difficulty }),
 });
 if (!res.ok) die(`verify rejected: HTTP ${res.status}`);
 // Anchored so a prefixed cookie name can't slip through as a partial match.
@@ -72,7 +75,7 @@ const { request } = await import("node:http");
 // and the script would never exit.
 const get = (headers) =>
   new Promise((resolve, reject) => {
-    const req = request(`${BASE}/`, { headers: { ...headers, Connection: "close" } }, (res) => {
+    const req = request(`${BASE}/`, { headers: { ...headers, "User-Agent": "pow-solve-test", Connection: "close" } }, (res) => {
       let data = "";
       res.on("data", (c) => (data += c));
       res.on("end", () => resolve(data));

@@ -1,44 +1,47 @@
-//! Challenge issuance and solution verification — the stateless PoW handshake.
-//!
-//! The server keeps **no per-challenge state**. It binds the random `salt`, the
-//! expiry *and the difficulty* to itself with an HMAC `token`; at verify time it
-//! re-derives that token to confirm the triple is one it issued and unexpired,
-//! then checks the hash. The client echoes the difficulty it was issued, but the
-//! token authenticates it — a client cannot substitute an easier target, and
-//! per-request difficulty (`challenge:<N>` decisions) stays stateless.
+//! Protocol v2: PoW is bound to the client's canonical public key and opaque
+//! client/policy context. Successful verification must be followed by atomic
+//! redemption of `token` before issuing clearance (see `redemption`).
 
 use crate::codec::{b64url, hex};
 use crate::mac::{ct_eq, hmac};
 use crate::target::solution_valid;
 
-/// What `GET {endpoint}challenge` returns to the browser.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Challenge {
-    /// Random per-request salt (hex).
+    pub version: u8,
     pub salt: String,
-    /// Unix seconds after which a solution is rejected.
     pub exp: i64,
-    /// Expected-hash count; the browser derives the same target from it.
     pub difficulty: u64,
-    /// HMAC binding `salt`+`exp` to the server (opaque to the client).
     pub token: String,
 }
 
-/// What the salt/exp/difficulty are bound under. Kept private and stable so
-/// issue and verify always agree.
-fn binding(salt: &str, exp: i64, difficulty: u64) -> Vec<u8> {
-    format!("{salt}|{exp}|{difficulty}").into_bytes()
+fn binding(salt: &str, exp: i64, difficulty: u64, pk: &[u8], context: &str) -> Vec<u8> {
+    serde_json::to_vec(&(
+        "pow-gate-challenge-v2",
+        salt,
+        exp,
+        difficulty,
+        b64url(pk),
+        context,
+    ))
+    .expect("serialize")
 }
 
-/// Issue a fresh challenge. `now` and `ttl` are seconds; `ttl` bounds how long the
-/// client has to solve (defeats precomputation).
-pub fn issue(key: &[u8], difficulty: u64, now: i64, ttl: i64) -> Challenge {
+pub fn issue(
+    key: &[u8],
+    pk: &[u8],
+    context: &str,
+    difficulty: u64,
+    now: i64,
+    ttl: i64,
+) -> Challenge {
     let mut raw = [0u8; 16];
     getrandom::getrandom(&mut raw).expect("OS RNG");
     let salt = hex(&raw);
     let exp = now + ttl;
-    let token = b64url(&hmac(key, &binding(&salt, exp, difficulty)));
+    let token = b64url(&hmac(key, &binding(&salt, exp, difficulty, pk, context)));
     Challenge {
+        version: 2,
         salt,
         exp,
         difficulty,
@@ -46,7 +49,6 @@ pub fn issue(key: &[u8], difficulty: u64, now: i64, ttl: i64) -> Challenge {
     }
 }
 
-/// Outcome of verifying a submitted solution.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verdict {
     Ok,
@@ -55,29 +57,36 @@ pub enum Verdict {
     WrongSolution,
 }
 
-/// Verify a submitted solution against a challenge the server issued.
-///
-/// `difficulty` is the value the client echoes from the challenge it received —
-/// but the token binds it, so anything other than the difficulty the server
-/// issued for exactly this salt/exp fails as `BadToken`. All of: token
-/// authentic, not expired, and hash below target.
 pub fn verify_solution(
     key: &[u8],
-    salt: &str,
-    exp: i64,
-    token: &str,
+    challenge: &Challenge,
     nonce: u64,
-    difficulty: u64,
+    pk: &[u8],
+    context: &str,
+    required_difficulty: u64,
     now: i64,
 ) -> Verdict {
-    let expect = b64url(&hmac(key, &binding(salt, exp, difficulty)));
-    if !ct_eq(expect.as_bytes(), token.as_bytes()) {
+    let expect = b64url(&hmac(
+        key,
+        &binding(
+            &challenge.salt,
+            challenge.exp,
+            challenge.difficulty,
+            pk,
+            context,
+        ),
+    ));
+    if challenge.version != 2
+        || challenge.difficulty == 0
+        || challenge.difficulty != required_difficulty
+        || !ct_eq(expect.as_bytes(), challenge.token.as_bytes())
+    {
         return Verdict::BadToken;
     }
-    if exp <= now {
+    if challenge.exp <= now {
         return Verdict::Expired;
     }
-    if !solution_valid(salt, nonce, difficulty) {
+    if !solution_valid(&challenge.salt, nonce, challenge.difficulty) {
         return Verdict::WrongSolution;
     }
     Verdict::Ok

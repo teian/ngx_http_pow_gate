@@ -30,7 +30,7 @@ pub fn verify(
     now: i64,
     skew: i64,
 ) -> bool {
-    if (now - ts).abs() > skew {
+    if skew < 0 || now.abs_diff(ts) > skew as u64 {
         return false;
     }
     let Ok(vk) = VerifyingKey::from_sec1_bytes(pk_sec1) else {
@@ -41,4 +41,24 @@ pub fn verify(
     };
     vk.verify(message(method, path, ts).as_bytes(), &signature)
         .is_ok()
+}
+
+/// Canonical WebCrypto SEC1 encoding; rejects malformed and alternate encodings.
+pub fn valid_public_key(pk: &[u8]) -> bool {
+    pk.len() == 65 && pk[0] == 4 && VerifyingKey::from_sec1_bytes(pk).is_ok()
+}
+
+/// Redemption proves possession of the key committed to the challenge.
+pub fn challenge_message(token: &str) -> String {
+    format!("pow-gate-redeem-v2 {token}")
+}
+
+pub fn verify_challenge(pk: &[u8], token: &str, sig: &[u8]) -> bool {
+    let Ok(vk) = VerifyingKey::from_sec1_bytes(pk) else {
+        return false;
+    };
+    let Ok(sig) = Signature::from_slice(sig) else {
+        return false;
+    };
+    vk.verify(challenge_message(token).as_bytes(), &sig).is_ok()
 }

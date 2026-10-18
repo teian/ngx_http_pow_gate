@@ -14,10 +14,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        nginx: [mainline, stable]
         libc: [debian, alpine]
     steps:
       - uses: actions/checkout@v5
-      - name: build module .so (${{ matrix.libc }}/amd64)
-        run: docker build -f docker/Dockerfile --target module-build-${{ matrix.libc }} .
-      - name: nginx -t smoke (${{ matrix.libc }}/amd64 — module loads, directives parse)
-        run: docker build -f docker/Dockerfile --target nginx-smoke-${{ matrix.libc }} .
+      - name: build module .so (${{ matrix.nginx }}/${{ matrix.libc }}/amd64)
+        run: ./scripts/build-nginx.sh ${{ matrix.nginx }} --target module-build-${{ matrix.libc }}
+      - name: nginx -t smoke (${{ matrix.nginx }}/${{ matrix.libc }}/amd64 — module loads, directives parse)
+        run: ./scripts/build-nginx.sh ${{ matrix.nginx }} --target nginx-smoke-${{ matrix.libc }}
+      - name: failed reload preserves verifier policy
+        if: matrix.libc == 'debian'
+        run: ./scripts/build-nginx.sh ${{ matrix.nginx }} --target security-reload

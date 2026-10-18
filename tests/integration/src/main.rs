@@ -34,6 +34,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(serde::Deserialize)]
 struct Challenge {
+    version: u8,
     salt: String,
     exp: i64,
     difficulty: u64,
@@ -45,7 +46,10 @@ fn base() -> String {
 }
 
 fn now() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
 }
 
 fn fail(msg: impl AsRef<str>) -> ! {
@@ -78,9 +82,22 @@ fn main() {
     }
     println!("✓ uncleared request was challenged");
 
+    let sk = SigningKey::random(&mut OsRng);
+    let pk = VerifyingKey::from(&sk)
+        .to_encoded_point(false)
+        .as_bytes()
+        .to_vec();
+    let pubkey = B64.encode(&pk);
+
     // 3. fetch a challenge
-    let ch: Challenge = match ureq::get(&format!("{base}/.pow/challenge")).call() {
-        Ok(r) => r.into_json().unwrap_or_else(|e| fail(format!("bad challenge json: {e}"))),
+    let ch: Challenge = match ureq::get(&format!("{base}/.pow/challenge"))
+        .set("X-Pow-Key", &pubkey)
+        .set("User-Agent", "e2e-client")
+        .call()
+    {
+        Ok(r) => r
+            .into_json()
+            .unwrap_or_else(|e| fail(format!("bad challenge json: {e}"))),
         Err(e) => fail(format!("GET /.pow/challenge failed: {e}")),
     };
     println!("✓ challenge: difficulty={} exp={}", ch.difficulty, ch.exp);
@@ -96,14 +113,13 @@ fn main() {
     println!("✓ solved: nonce={nonce}");
 
     // keypair for clearance binding + proof
-    let sk = SigningKey::random(&mut OsRng);
-    let pk = VerifyingKey::from(&sk).to_encoded_point(false).as_bytes().to_vec();
-    let pubkey = B64.encode(&pk);
 
     // 5. submit the solution
-    let verify = ureq::post(&format!("{base}/.pow/verify")).send_json(ureq::json!({
+    let verify = ureq::post(&format!("{base}/.pow/verify")).set("User-Agent", "e2e-client").send_json(ureq::json!({
+        "version": ch.version,
+        "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&ch.token).as_bytes()))),
         "salt": ch.salt, "exp": ch.exp, "token": ch.token,
-        "nonce": nonce, "pubkey": pubkey,
+        "nonce": nonce, "pubkey": pubkey, "difficulty": ch.difficulty,
     }));
     let set_cookie = match verify {
         Ok(r) if r.status() == 204 || r.status() == 200 => r
@@ -113,12 +129,93 @@ fn main() {
         Ok(r) => fail(format!("/verify status {}", r.status())),
         Err(e) => fail(format!("POST /.pow/verify failed: {e}")),
     };
-    let cookie = set_cookie
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .to_string();
+    let cookie = set_cookie.split(';').next().unwrap_or("").to_string();
     println!("✓ verified, got clearance cookie");
+    // A redeemed token stays spent across all worker connections.
+    let replay = ureq::post(&format!("{base}/.pow/verify"))
+        .set("User-Agent", "e2e-client").send_json(ureq::json!({
+            "version": ch.version, "salt": ch.salt, "exp": ch.exp, "token": ch.token,
+            "nonce": nonce, "difficulty": ch.difficulty, "pubkey": pubkey,
+            "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&ch.token).as_bytes()))),
+        }));
+    if !matches!(replay, Err(ureq::Error::Status(409, _))) {
+        fail("redeemed challenge accepted twice");
+    }
+    println!("✓ repeated redemption rejected (409)");
+
+    let moved = ureq::get(&format!("{base}/"))
+        .set("Cookie", &cookie)
+        .set("User-Agent", "different-client")
+        .call()
+        .unwrap()
+        .into_string()
+        .unwrap();
+    if moved.contains("upstream-content") {
+        fail("cookie accepted under another User-Agent");
+    }
+    println!("✓ cookie sharing across User-Agents rejected");
+    for (path, header) in [
+        ("/other-policy", None),
+        ("/stronger", None),
+        ("/", Some(("X-Pow-Test-IP", "198.51.100.42"))),
+    ] {
+        let mut request = ureq::get(&format!("{base}{path}"))
+            .set("Cookie", &cookie)
+            .set("User-Agent", "e2e-client");
+        if let Some((key, value)) = header {
+            request = request.set(key, value);
+        }
+        let body = request.call().unwrap().into_string().unwrap();
+        if body.contains("upstream-content") {
+            fail(format!("cookie escaped context/policy at {path}"));
+        }
+    }
+    println!("✓ cookie sharing across addresses/policies and stronger-policy downgrade rejected");
+
+    // Race fresh redemption over independent connections and nginx workers.
+    let racing: Challenge = ureq::get(&format!("{base}/.pow/challenge"))
+        .set("X-Pow-Key", &pubkey)
+        .set("User-Agent", "e2e-client")
+        .call()
+        .unwrap()
+        .into_json()
+        .unwrap();
+    let winning_nonce = (0..)
+        .find(|n| solution_valid(&racing.salt, *n, racing.difficulty))
+        .unwrap();
+    let racing_body = ureq::json!({
+        "version": racing.version, "salt": racing.salt, "exp": racing.exp, "token": racing.token,
+        "nonce": winning_nonce, "difficulty": racing.difficulty, "pubkey": pubkey,
+        "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&racing.token).as_bytes()))),
+    });
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(16));
+    let racers: Vec<_> = (0..16)
+        .map(|_| {
+            let base = base.clone();
+            let body = racing_body.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                match ureq::post(&format!("{base}/.pow/verify"))
+                    .set("User-Agent", "e2e-client")
+                    .send_json(body)
+                {
+                    Ok(r) => r.status(),
+                    Err(ureq::Error::Status(code, _)) => code,
+                    Err(_) => 0,
+                }
+            })
+        })
+        .collect();
+    let statuses: Vec<_> = racers.into_iter().map(|t| t.join().unwrap()).collect();
+    if statuses.iter().filter(|s| **s == 204).count() != 1
+        || statuses.iter().filter(|s| **s == 409).count() != 15
+    {
+        fail(format!(
+            "racing redemptions expected one 204 and fifteen 409: {statuses:?}"
+        ));
+    }
+    println!("✓ concurrent redemption: exactly one winner across worker connections");
 
     // 6. cleared request reaches upstream
     let ts = now();
@@ -224,7 +321,9 @@ fn main() {
             Err(e) => fail(format!("{what} failed: {e}")),
         };
         if !sub_body.contains("upstream-content") {
-            fail(format!("{what} (mode={mode}, dest={dest}) on cookie alone did NOT reach upstream"));
+            fail(format!(
+                "{what} (mode={mode}, dest={dest}) on cookie alone did NOT reach upstream"
+            ));
         }
         println!("✓ {what} on cookie alone reached upstream");
     }
@@ -243,9 +342,13 @@ fn main() {
         Err(e) => fail(format!("default-proof GET failed: {e}")),
     };
     if !default_proof_body.contains("upstream-content") {
-        fail("fetch/XHR without proof was challenged on default require_proof — default is not off");
+        fail(
+            "fetch/XHR without proof was challenged on default require_proof — default is not off",
+        );
     }
-    println!("✓ fetch/XHR without proof reached upstream where require_proof is unset (default off)");
+    println!(
+        "✓ fetch/XHR without proof reached upstream where require_proof is unset (default off)"
+    );
 
     // 7. verifier: a UA that maps to verify:test reaches upstream WITHOUT solving,
     //    once the background refresher has loaded the IP-range feed (0.0.0.0/0 ⇒
@@ -267,25 +370,51 @@ fn main() {
         fail("verified good-bot (verify:test) did not reach upstream");
     }
     println!("✓ verified good-bot allowed via IP-range verifier");
+    let mut dns_verified = false;
+    for _ in 0..40 {
+        let body = ureq::get(&format!("{base}/"))
+            .set("User-Agent", "dnsbot/1.0")
+            .set("X-Pow-Test-IP", "127.0.0.1")
+            .call()
+            .map(|r| r.into_string().unwrap_or_default())
+            .unwrap_or_default();
+        if body.contains("upstream-content") {
+            dns_verified = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    if !dns_verified {
+        fail("bounded DNS worker pool did not verify localhost");
+    }
+    println!("✓ bounded FCrDNS pool verified and cached the local resolver result");
 
     // 8. challenge:<N> — a UA mapped to challenge:5000 is issued exactly that
     //    difficulty, the echoed value verifies, and echoing a LOWER one with
     //    the same token is rejected (HMAC-bound).
     let hard: Challenge = match ureq::get(&format!("{base}/.pow/challenge"))
+        .set("X-Pow-Key", &pubkey)
         .set("User-Agent", "hardbot/1.0")
         .call()
     {
-        Ok(r) => r.into_json().unwrap_or_else(|e| fail(format!("bad hardbot challenge json: {e}"))),
+        Ok(r) => r
+            .into_json()
+            .unwrap_or_else(|e| fail(format!("bad hardbot challenge json: {e}"))),
         Err(e) => fail(format!("hardbot GET /.pow/challenge failed: {e}")),
     };
     if hard.difficulty != 5000 {
-        fail(format!("challenge:5000 override not applied — issued difficulty {}", hard.difficulty));
+        fail(format!(
+            "challenge:5000 override not applied — issued difficulty {}",
+            hard.difficulty
+        ));
     }
     let mut hard_nonce = 0u64;
     while !solution_valid(&hard.salt, hard_nonce, hard.difficulty) {
         hard_nonce += 1;
     }
-    let downgrade = ureq::post(&format!("{base}/.pow/verify")).send_json(ureq::json!({
+    let downgrade = ureq::post(&format!("{base}/.pow/verify")).set("User-Agent", "hardbot/1.0").send_json(ureq::json!({
+        "version": hard.version,
+        "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&hard.token).as_bytes()))),
         "salt": hard.salt, "exp": hard.exp, "token": hard.token,
         "nonce": hard_nonce, "pubkey": pubkey, "difficulty": 4,
     }));
@@ -293,7 +422,9 @@ fn main() {
         Err(ureq::Error::Status(400, _)) => println!("✓ difficulty downgrade rejected (400)"),
         other => fail(format!("downgraded difficulty expected 400, got {other:?}")),
     }
-    let hard_ok = ureq::post(&format!("{base}/.pow/verify")).send_json(ureq::json!({
+    let hard_ok = ureq::post(&format!("{base}/.pow/verify")).set("User-Agent", "hardbot/1.0").send_json(ureq::json!({
+        "version": hard.version,
+        "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&hard.token).as_bytes()))),
         "salt": hard.salt, "exp": hard.exp, "token": hard.token,
         "nonce": hard_nonce, "pubkey": pubkey, "difficulty": hard.difficulty,
     }));
@@ -306,20 +437,28 @@ fn main() {
 
     // 9. challenge:js — the lightweight tier issues difficulty 1 (any nonce).
     let js: Challenge = match ureq::get(&format!("{base}/.pow/challenge"))
+        .set("X-Pow-Key", &pubkey)
         .set("User-Agent", "litebot/1.0")
         .call()
     {
-        Ok(r) => r.into_json().unwrap_or_else(|e| fail(format!("bad litebot challenge json: {e}"))),
+        Ok(r) => r
+            .into_json()
+            .unwrap_or_else(|e| fail(format!("bad litebot challenge json: {e}"))),
         Err(e) => fail(format!("litebot GET /.pow/challenge failed: {e}")),
     };
     if js.difficulty != 1 {
-        fail(format!("challenge:js expected difficulty 1, got {}", js.difficulty));
+        fail(format!(
+            "challenge:js expected difficulty 1, got {}",
+            js.difficulty
+        ));
     }
     let mut js_nonce = 0u64;
     while !solution_valid(&js.salt, js_nonce, js.difficulty) {
         js_nonce += 1;
     }
-    let js_ok = ureq::post(&format!("{base}/.pow/verify")).send_json(ureq::json!({
+    let js_ok = ureq::post(&format!("{base}/.pow/verify")).set("User-Agent", "litebot/1.0").send_json(ureq::json!({
+        "version": js.version,
+        "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&js.token).as_bytes()))),
         "salt": js.salt, "exp": js.exp, "token": js.token,
         "nonce": js_nonce, "pubkey": pubkey, "difficulty": js.difficulty,
     }));
@@ -346,8 +485,8 @@ fn main() {
     if !nojs_page.contains("http-equiv=\"refresh\"") {
         fail("challenge:nojs did not serve the meta-refresh page");
     }
-    let pass_url = extract_pass_url(&nojs_page)
-        .unwrap_or_else(|| fail("no pass URL in the nojs page"));
+    let pass_url =
+        extract_pass_url(&nojs_page).unwrap_or_else(|| fail("no pass URL in the nojs page"));
     println!("✓ nojs page served with meta refresh → {pass_url}");
 
     // 10a. redeeming immediately must NOT clear — it re-serves the page with a
@@ -392,9 +531,19 @@ fn main() {
         .to_string();
     let location = redeemed.header("location").unwrap_or("").to_string();
     if location != nojs_path {
-        fail(format!("pass redirect Location {location:?} != original path {nojs_path:?}"));
+        fail(format!(
+            "pass redirect Location {location:?} != original path {nojs_path:?}"
+        ));
     }
     println!("✓ pass redeemed after wait: 302 to original path + cookie");
+    let reused_nojs = agent
+        .get(&format!("{base}{fresh_pass_url}"))
+        .set("User-Agent", "nojsbot/1.0")
+        .call();
+    if !matches!(reused_nojs, Err(ureq::Error::Status(409, _))) {
+        fail("no-JS grant could be redeemed twice");
+    }
+    println!("✓ no-JS grant reuse rejected (409)");
 
     // 10c. the no-JS clearance opens the gate like any other.
     let nojs_cleared = ureq::get(&format!("{base}/default-proof"))
@@ -414,15 +563,23 @@ fn main() {
     let form_body = "qty=2&note=hello+world";
     let challenged = post_form(&format!("{base}{form_path}"), form_body, &[]);
     if challenged.status != 200 {
-        fail(format!("challenged POST expected the 200 page, got {}", challenged.status));
+        fail(format!(
+            "challenged POST expected the 200 page, got {}",
+            challenged.status
+        ));
     }
     if challenged.cache_control != "no-store" {
-        fail(format!("captured page must be no-store, got {:?}", challenged.cache_control));
+        fail(format!(
+            "captured page must be no-store, got {:?}",
+            challenged.cache_control
+        ));
     }
     let captured = extract_replay(&challenged.body)
         .unwrap_or_else(|| fail("challenged POST carried no pow-replay payload"));
     if captured["method"] != "POST" || captured["url"] != form_path {
-        fail(format!("replay payload targets the wrong request: {captured}"));
+        fail(format!(
+            "replay payload targets the wrong request: {captured}"
+        ));
     }
     if captured["type"] != "application/x-www-form-urlencoded" {
         fail(format!("replay payload lost the content type: {captured}"));
@@ -431,7 +588,10 @@ fn main() {
         .decode(captured["body"].as_str().unwrap_or_default())
         .unwrap_or_else(|e| fail(format!("replay body is not base64url: {e}")));
     if replay_body != form_body.as_bytes() {
-        fail(format!("replay body {:?} != {form_body:?}", String::from_utf8_lossy(&replay_body)));
+        fail(format!(
+            "replay body {:?} != {form_body:?}",
+            String::from_utf8_lossy(&replay_body)
+        ));
     }
     println!("✓ challenged POST captured into the challenge page verbatim");
 
@@ -465,16 +625,26 @@ fn main() {
     //      gate switched off, and never reaches the capture at all.
     let refused = post_form(&format!("{base}/replay-over-limit"), &big, &[]);
     if refused.status != 413 {
-        fail(format!("over client_max_body_size expected nginx's 413, got {}", refused.status));
+        fail(format!(
+            "over client_max_body_size expected nginx's 413, got {}",
+            refused.status
+        ));
     }
     println!("✓ client_max_body_size still rejects before the gate ever runs (413)");
 
     // 11e. with the clearance the POST is no longer gated: it reaches the
     //      CONTENT phase, where the static module answers 405 (it serves files,
     //      not submissions) — proof the gate declined rather than challenged.
-    let cleared_post = post_form(&format!("{base}{form_path}"), form_body, &[("Cookie", &cookie)]);
+    let cleared_post = post_form(
+        &format!("{base}{form_path}"),
+        form_body,
+        &[("Cookie", &cookie)],
+    );
     if cleared_post.status != 405 {
-        fail(format!("cleared POST expected 405 from upstream, got {}", cleared_post.status));
+        fail(format!(
+            "cleared POST expected 405 from upstream, got {}",
+            cleared_post.status
+        ));
     }
     if extract_replay(&cleared_post.body).is_some() {
         fail("cleared POST was challenged instead of passed through");

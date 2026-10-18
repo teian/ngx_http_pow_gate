@@ -17,15 +17,18 @@
 
 pub mod clearance;
 pub mod codec;
+pub mod context;
 pub mod decision;
 mod mac;
 pub mod nojs;
 pub mod pow;
 pub mod proof;
 pub mod ranges;
+pub mod redemption;
 pub mod replay;
 pub mod target;
 pub mod uri;
+pub mod verdict_cache;
 
 pub use clearance::Clearance;
 pub use decision::Decision;

@@ -19,16 +19,25 @@ docker_pipeline() {
   echo "==> core unit tests (in Docker)"
   docker build -f docker/Dockerfile --target core-test .
 
-  echo "==> build module against nginx"
-  docker build -f docker/Dockerfile --target module-build-debian -t pow-gate-module .
-
-  echo "==> nginx -t smoke (module loads + directives parse)"
-  docker build -f docker/Dockerfile --target nginx-smoke-debian -t pow-gate-nginx .
-
-  echo "==> live end-to-end handshake"
-  docker compose -f docker-compose.test.yml up --build \
-    --abort-on-container-exit --exit-code-from e2e
-  docker compose -f docker-compose.test.yml down -v
+  for channel in mainline stable; do
+    for libc in debian alpine; do
+      echo "==> build + nginx -t: $channel / $libc"
+      ./scripts/build-nginx.sh "$channel" --target "nginx-smoke-$libc"
+      if [[ "$libc" == debian ]]; then
+        ./scripts/build-nginx.sh "$channel" --target security-reload
+      fi
+      pins=$(python3 scripts/nginx-versions.py "$channel")
+      while IFS='=' read -r name value; do export "$name=$value"; done <<<"$pins"
+      export SMOKE_TARGET="nginx-smoke-$libc"
+      echo "==> live handshake: $channel / $libc"
+      docker compose -f docker-compose.test.yml up --build \
+        --abort-on-container-exit --exit-code-from e2e || {
+          docker compose -f docker-compose.test.yml down -v
+          return 1
+        }
+      docker compose -f docker-compose.test.yml down -v
+    done
+  done
 }
 
 case "$stage" in

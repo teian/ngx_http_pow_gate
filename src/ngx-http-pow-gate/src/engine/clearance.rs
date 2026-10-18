@@ -21,7 +21,11 @@ use crate::runtime::{self, Cfg};
 ///   tag-driven subresource loads (`<script>`, `<img>`, `<link>`, fonts, …)
 ///   cannot attach custom headers, so they pass on the cookie alone; demanding
 ///   a proof of them would challenge every asset on a gated page.
-pub fn has_valid_clearance(r: &Request, cfg: &Cfg) -> bool {
+pub fn has_valid_clearance(
+    r: &Request,
+    cfg: &Cfg,
+    required: pow_gate_core::context::Assurance,
+) -> bool {
     // No usable HMAC key -> never trust a clearance cookie (an empty/known key
     // would let anyone forge one). Fail closed: the client is challenged.
     if !cfg.key_ok {
@@ -33,10 +37,14 @@ pub fn has_valid_clearance(r: &Request, cfg: &Cfg) -> bool {
         Some(c) => c,
         None => return false,
     };
-    let cleared = match clearance::verify(&cfg.key, &token, now) {
-        Some(c) => c,
-        None => return false,
+    let Some(context) = runtime::client_context(r, cfg) else {
+        return false;
     };
+    let cleared =
+        match clearance::verify(&cfg.key, &token, &context, required, now, cfg.clearance_ttl) {
+            Some(c) => c,
+            None => return false,
+        };
 
     match runtime::header(r, "x-pow-proof") {
         Some(proof_header) => {

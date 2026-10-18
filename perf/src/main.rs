@@ -17,12 +17,14 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
 use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
 use pow_gate_core::target::solution_valid;
 use rand_core::OsRng;
+use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(serde::Deserialize)]
 struct Challenge {
+    version: u8,
     salt: String,
     exp: i64,
     difficulty: u64,
@@ -33,7 +35,10 @@ fn env(k: &str, default: &str) -> String {
     std::env::var(k).unwrap_or_else(|_| default.into())
 }
 fn now() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
 }
 
 /// One immutable client identity: the clearance cookie + the keypair that signs
@@ -44,7 +49,14 @@ struct Identity {
 }
 
 fn handshake(base: &str) -> Identity {
+    let sk = SigningKey::random(&mut OsRng);
+    let pk = VerifyingKey::from(&sk)
+        .to_encoded_point(false)
+        .as_bytes()
+        .to_vec();
+
     let ch: Challenge = ureq::get(&format!("{base}/.pow/challenge"))
+        .set("X-Pow-Key", &B64.encode(&pk))
         .call()
         .expect("challenge")
         .into_json()
@@ -53,9 +65,9 @@ fn handshake(base: &str) -> Identity {
     while !solution_valid(&ch.salt, nonce, ch.difficulty) {
         nonce += 1;
     }
-    let sk = SigningKey::random(&mut OsRng);
-    let pk = VerifyingKey::from(&sk).to_encoded_point(false).as_bytes().to_vec();
     let res = ureq::post(&format!("{base}/.pow/verify")).send_json(ureq::json!({
+        "version": ch.version, "difficulty": ch.difficulty,
+        "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&ch.token).as_bytes()))),
         "salt": ch.salt, "exp": ch.exp, "token": ch.token,
         "nonce": nonce, "pubkey": B64.encode(&pk),
     }));
@@ -65,7 +77,10 @@ fn handshake(base: &str) -> Identity {
         .expect("set-cookie")
         .to_string();
     let cookie = set_cookie.split(';').next().unwrap_or("").to_string();
-    Identity { cookie, signing: sk }
+    Identity {
+        cookie,
+        signing: sk,
+    }
 }
 
 fn proof_header(id: &Identity, method: &str, path: &str) -> String {
@@ -108,20 +123,39 @@ fn one_request(agent: &ureq::Agent, base: &str, mode: Mode, id: &Identity) -> Op
     let t = Instant::now();
     let res = match mode {
         Mode::Baseline => agent.get(&format!("{base}/healthz")).call(),
-        Mode::Challenge => agent.get(&format!("{base}/")).set("User-Agent", "perf").call(),
-        Mode::Cleared => agent.get(&format!("{base}/")).set("Cookie", &id.cookie).call(),
+        Mode::Challenge => agent
+            .get(&format!("{base}/"))
+            .set("User-Agent", "perf")
+            .call(),
+        Mode::Cleared => agent
+            .get(&format!("{base}/"))
+            .set("Cookie", &id.cookie)
+            .call(),
         Mode::Proof => agent
             .get(&format!("{base}/"))
             .set("Cookie", &id.cookie)
             .set("X-Pow-Proof", &proof_header(id, "GET", "/"))
             .call(),
     };
-    // challenge returns 200 (page); others 200; any 2xx/3xx counts as served.
-    match res {
-        Ok(_) => Some(t.elapsed()),
-        Err(ureq::Error::Status(_, _)) => Some(t.elapsed()), // served, non-2xx still timed
-        Err(_) => None,
+    let response = res.ok()?;
+    if response.status() != 200 {
+        return None;
     }
+    // Drain the entire body before recording latency or returning this socket
+    // to the pool. Timing headers alone overstates completed-request throughput.
+    let mut body = response.into_reader();
+    let mut preview = Vec::with_capacity(8192);
+    body.by_ref().take(65536).read_to_end(&mut preview).ok()?;
+    std::io::copy(&mut body, &mut std::io::sink()).ok()?;
+    let marker: &[u8] = match mode {
+        Mode::Baseline => b"ok",
+        Mode::Challenge => b"solver.js",
+        Mode::Cleared | Mode::Proof => b"upstream-content",
+    };
+    if !preview.windows(marker.len()).any(|window| window == marker) {
+        return None;
+    }
+    Some(t.elapsed())
 }
 
 struct Stats {

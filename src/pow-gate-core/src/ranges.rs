@@ -17,10 +17,7 @@ use std::net::IpAddr;
 /// `googlebot.com` behave identically.
 pub fn host_matches_suffix(host: &str, suffix: &str) -> bool {
     let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
-    let suffix = suffix
-        .trim()
-        .trim_matches('.')
-        .to_ascii_lowercase();
+    let suffix = suffix.trim().trim_matches('.').to_ascii_lowercase();
     if host.is_empty() || suffix.is_empty() {
         return false;
     }
@@ -49,13 +46,21 @@ impl IpRangeSet {
         match ip_str.parse::<IpAddr>() {
             Ok(IpAddr::V4(a)) => {
                 let bits = prefix.unwrap_or(32).min(32);
-                let mask = if bits == 0 { 0 } else { u32::MAX << (32 - bits) };
+                let mask = if bits == 0 {
+                    0
+                } else {
+                    u32::MAX << (32 - bits)
+                };
                 self.v4.push((u32::from(a) & mask, mask));
                 true
             }
             Ok(IpAddr::V6(a)) => {
                 let bits = prefix.unwrap_or(128).min(128);
-                let mask = if bits == 0 { 0 } else { u128::MAX << (128 - bits) };
+                let mask = if bits == 0 {
+                    0
+                } else {
+                    u128::MAX << (128 - bits)
+                };
                 self.v6.push((u128::from(a) & mask, mask));
                 true
             }

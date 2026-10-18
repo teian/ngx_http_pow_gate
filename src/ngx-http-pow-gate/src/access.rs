@@ -27,7 +27,7 @@ use ngx::ffi::{
 use ngx::http::{HttpModule, HttpModuleConfExt, NgxHttpCoreModule, Request};
 
 use pow_gate_core::nojs;
-use pow_gate_core::Decision;
+use pow_gate_core::{context::Assurance, Decision};
 
 use crate::challenge::{route_internal, serve_challenge_page, serve_nojs_page};
 use crate::config::LocationConf;
@@ -56,10 +56,7 @@ ngx::http_request_handler!(pow_gate_access, |request: &mut Request| {
     // on the endpoint request as on the gated one).
     let decision_raw = eval_complex_value(request, location_conf.decision);
     let decision = Decision::parse(&decision_raw);
-    let effective_difficulty = match decision {
-        Decision::Challenge { difficulty: Some(n) } => n,
-        _ => cfg.difficulty,
-    };
+    let required = assurance_for(&decision, &cfg);
 
     // 0. internal endpoints (challenge / solver.js / verify / pass) bypass the gate.
     let uri = unsafe { as_str(&(*raw).uri) };
@@ -69,7 +66,7 @@ ngx::http_request_handler!(pow_gate_access, |request: &mut Request| {
             request,
             &cfg,
             suffix,
-            effective_difficulty,
+            required,
             &location_conf.nojs_page_cache,
         )
         .unwrap_or(Status::NGX_DECLINED);
@@ -97,14 +94,17 @@ ngx::http_request_handler!(pow_gate_access, |request: &mut Request| {
 
     // 3. challenge: cleared clients pass; everyone else gets the page the
     // decision picked — JS PoW by default, meta-refresh for challenge:nojs.
-    if has_valid_clearance(request, &cfg) {
+    if has_valid_clearance(request, &cfg, required) {
         return Status::NGX_DECLINED;
     }
     if let Decision::ChallengeNoJs { delay } = decision {
         // Return path: the RAW client-sent URI (still percent-encoded, unlike
         // r->uri) — core additionally sanitizes it before it reaches a header.
         let return_path = unsafe { as_str(&(*raw).unparsed_uri) };
-        let grant = nojs::issue(&cfg.key, return_path, delay, runtime::now());
+        let Some(context) = runtime::client_context(request, &cfg) else {
+            return ngx::http::HTTPStatus::SERVICE_UNAVAILABLE.into();
+        };
+        let grant = nojs::issue(&cfg.key, return_path, delay, runtime::now(), &context);
         let pass_url = format!("{}pass?t={}", cfg.endpoint, grant);
         return serve_nojs_page(request, &location_conf.nojs_page_cache, &pass_url, delay);
     }
@@ -154,4 +154,23 @@ fn eval_complex_value(r: &Request, cv: *mut ngx_http_complex_value_t) -> String 
 /// `pow_gate_decision deny` lands here: refuse the request outright.
 fn deny(_r: &mut Request) -> Status {
     ngx::http::HTTPStatus::FORBIDDEN.into()
+}
+
+fn assurance_for(decision: &Decision<'_>, cfg: &runtime::Cfg) -> Assurance {
+    match decision {
+        Decision::ChallengeNoJs { delay } => Assurance::NoJs { delay: *delay },
+        Decision::Challenge {
+            difficulty: Some(n),
+        } => Assurance::Pow { difficulty: *n },
+        _ => Assurance::Pow {
+            difficulty: cfg.difficulty,
+        },
+    }
+}
+
+/// Re-evaluate the policy in the asynchronous verify callback. The client cannot
+/// choose a weaker echoed difficulty or reuse a different issuance tier.
+pub fn required_assurance(r: &Request, lc: &LocationConf, cfg: &runtime::Cfg) -> Assurance {
+    let raw = eval_complex_value(r, lc.decision);
+    assurance_for(&Decision::parse(&raw), cfg)
 }

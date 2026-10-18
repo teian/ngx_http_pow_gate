@@ -139,11 +139,12 @@ sequenceDiagram
 
     rect rgb(245,245,245)
     note over B,E: solve loop (in solver.js)
-    B->>E: GET /.pow/challenge
+    B->>B: Generate/load P-256 keypair
+    B->>E: GET /.pow/challenge (X-Pow-Key)
     E-->>B: { salt, target, expires_at }
     B->>B: keypair; find nonce: H(salt‖nonce) < target
-    B->>E: POST /.pow/verify { salt, nonce, pubkey }
-    E->>E: salt ours & unexpired? hash < target?
+    B->>E: POST /.pow/verify { version, salt, nonce, pubkey, signature, ... }
+    E->>E: context/key/policy match? hash and signature valid? redeem once
     E-->>B: 204 Set-Cookie: pow_clearance
     end
 
@@ -202,43 +203,26 @@ is held to an absolute same-site path; `<`, `>` and `&` are escaped in the JSON)
 
 ## The two-token security model
 
-A single cookie is not enough: cookies get stolen, copied between machines, and
-replayed. The gate splits "did the work" from "is still the same client":
+Protocol v2 commits the client public key, client address policy, User-Agent,
+policy scope and random shared-store issuer into every PoW challenge. The client
+signs redemption with that key. The challenge token is then consumed atomically
+under nginx's process-shared mutex before clearance is minted. The bounded
+2 MiB store is shared by all workers, persists across graceful reloads and never
+evicts live entries. A full restart changes its issuer and invalidates old
+challenges and clearances. No-JS grants use the same context and one-use store.
 
-```mermaid
-flowchart TB
-    subgraph cookie[Clearance cookie — long-lived, pow_gate_clearance_ttl]
-      c1[payload: ip_bucket, ua_hash,<br/>pubkey_thumbprint, issued, expires]
-      c2[HMAC-SHA256 with server key]
-      c1 --> c2
-    end
-    subgraph proof[Per-request proof — short-lived, pow_gate_proof_skew]
-      p1[sign H method | path | timestamp]
-      p2[with the client's private key]
-      p1 --> p2
-    end
-    cookie -. binds .-> proof
-    note[A stolen cookie has the pubkey_thumbprint<br/>but not the private key → cannot mint proofs]
-    proof --- note
-```
+The clearance contains version, public key, opaque context, authenticated
+assurance (PoW difficulty / no-JS wait), issue time and expiry, protected by a
+domain-separated HMAC. Validation checks the client/policy context, current
+minimum assurance, expiry and current configured maximum age. A cheap clearance
+cannot unlock a stronger policy.
 
-- **Clearance cookie** — issued once per solve. HMAC-signed with
-  `pow_gate_hmac_key_file`, so clients can't forge it. Carries the *thumbprint*
-  of the client's public key. Lives `pow_gate_clearance_ttl` (default 12h).
-- **Per-request proof** — the client signs `(method, path, timestamp)` with the
-  matching **private** key on every gated `fetch`/XHR request. The server checks
-  the signature against the cookie's thumbprint and that the timestamp is within
-  `pow_gate_proof_skew` (e.g. 5s). A captured cookie+proof can't be replayed
-  seconds later, and the cookie alone is worthless without the private key.
-  Only *demanded* with `pow_gate_require_proof on` (default `off` — it needs
-  the site's own pages to sign their `fetch`/XHR calls; navigations and tag
-  subresources can never carry the header and always pass on the cookie alone).
-
-This is the same idea as [DPoP (RFC 9449)](https://www.rfc-editor.org/rfc/rfc9449):
-bind a bearer token to a key the holder must prove possession of.
-
-Implementation: [`src/engine/clearance.rs`](../src/ngx-http-pow-gate/src/engine/clearance.rs),
-[`src/pow-gate-core/src/proof.rs`](../src/pow-gate-core/src/proof.rs).
+Per-request proofs additionally demonstrate key possession on requests that send
+`X-Pow-Proof`; missing-proof enforcement remains optional for fetch/XHR. Browser
+navigations still use a bearer cookie within its address/UA context. Sharing a
+cookie inside that context remains possible; fetch metadata is not an identity
+signal for arbitrary HTTP clients. See [security.md](security.md) for the exact
+limits, memory budget and Redis cluster proposal.
 
 ---
 
@@ -283,9 +267,9 @@ Implementation: [`src/verifier.rs`](../src/ngx-http-pow-gate/src/verifier.rs).
 | Mass scraping by cost-sensitive bots     | PoW makes each un-cleared request cost CPU (`pow_gate_difficulty`) |
 | Spoofed good-bot User-Agent              | `verify:<name>` checks IP ranges + FCrDNS, not the UA string       |
 | Clearance cookie theft / sharing         | Per-request proof bound to a private key the thief doesn't have (`pow_gate_require_proof on`, needs page integration) |
-| Cookie/proof replay                      | Proof timestamp must be within `pow_gate_proof_skew`               |
+| Challenge/proof replay                      | Challenges redeem once across workers; proofs require freshness (not a per-proof nonce ledger)               |
 | Forged clearance cookie                  | HMAC-SHA256 with server-only `pow_gate_hmac_key_file`              |
-| Precomputed / farmed-out PoW solutions   | `salt` is per-request, HMAC-bound, and `expires_at`-limited        |
+| Long-term precomputed PoW solutions   | Random salt, bound key/client/policy, short expiry and atomic one-use redemption        |
 | Abusive UA you want to hard-block        | `map … deny` → `403`, no challenge offered                         |
 
 **Out of scope / caveats:**

@@ -25,6 +25,9 @@ gate.
 | `pow_gate_decision`        | server, location          | `$var`       | `challenge` | `LocationConf.decision`         |
 | `pow_gate_page`            | http, server, location    | `<file>`     | embedded    | `LocationConf.page_path`        |
 | `pow_gate_nojs_page`       | http, server, location    | `<file>`     | embedded    | `LocationConf.nojs_page_path`   |
+| `pow_gate_ipv4_prefix` | http, server, location | `1..32` | `32` | Address binding prefix |
+| `pow_gate_ipv6_prefix` | http, server, location | `1..128` | `128` | Address binding prefix |
+| `pow_gate_policy` | http, server, location | `<name>` | `default` | Named client/clearance scope |
 | `pow_gate_difficulty`      | http, server, location    | `N`          | `50000`     | `LocationConf.difficulty`       |
 | `pow_gate_hmac_key_file`   | http, server, location    | `<file>`     | —           | `LocationConf.hmac_key_file`    |
 | `pow_gate_clearance_ttl`   | http, server, location    | `<time>`     | `12h`       | `LocationConf.clearance_ttl`    |
@@ -180,6 +183,34 @@ config time, and an unreadable file is a config-load error, same as
 ([`assets/challenge-nojs.html`](../assets/challenge-nojs.html)) works in lynx,
 w3m and any browser with JavaScript disabled.
 
+### Client and policy binding (protocol v2)
+
+`pow_gate_ipv4_prefix` defaults to **32** and `pow_gate_ipv6_prefix` to **128**:
+clearances are tied to the exact client address and User-Agent. Prefix 0 is
+rejected. IPv6 `/64` is an optional compromise for privacy-address rotation;
+clients inside that subnet then share the same address binding.
+
+`pow_gate_policy <name>` defaults to `default`. It joins cookie scope and endpoint
+in the authenticated policy identity. Change the name to invalidate existing
+clearances in that scope. Different difficulty tiers are also enforced: an easy
+or no-JS clearance never grants a stronger PoW policy. Configure an endpoint in
+the same location when overriding policy/difficulty there:
+
+```nginx
+location /search/ {
+    pow_gate on;
+    pow_gate_policy search;
+    pow_gate_difficulty 2000000;
+    pow_gate_endpoint /search/.pow/;
+    proxy_pass http://backend;
+}
+```
+
+The 2 MiB replay table is shared by all workers and survives graceful reloads.
+A full restart invalidates cookies/challenges; saturation returns 503. See
+[security.md](security.md) for memory bounds, limitations and the proposed Redis
+backend. No Redis directive exists in this release.
+
 ### `pow_gate_difficulty N;`
 
 > Context: `http`, `server`, `location` · Argument: integer
@@ -224,22 +255,16 @@ Rotating the key invalidates all outstanding clearances (clients re-solve once).
 
 > Context: `http`, `server`, `location` · Default: `12h`
 
-How long a clearance stays valid after a solve — i.e. how long until a returning
-visitor is challenged **again**. This is a UX knob, not a security one: once a
-human solves the PoW, re-challenging them every half hour is a nuisance, so the
-default is a generous **12h** (covers a working day). Bump it higher (`24h`,
-`72h`) for a friendlier site; lower it only if you have a specific reason.
+Maximum clearance age after a solve. Both the signed expiry and the current
+location's TTL are enforced; lowering this setting also restricts older cookies.
+The default is `12h`. Shorter lifetimes increase repeat solving for visitors and
+reduce how long a crawler can browse after one solve. Choose using observed
+traffic and combine with request limits.
 
-Length trades UX against the replay window of a leaked clearance cookie. With
-`pow_gate_require_proof on`, fetch/XHR requests still need a fresh
-`pow_gate_proof_skew`-bounded proof signed by the client's private key (see
-[docs/architecture.md](architecture.md#the-two-token-security-model)), so a
-stolen cookie cannot be replayed over those. **Everything else is gated by the
-cookie alone** — navigations and tag subresources cannot carry the proof header
-— so a longer TTL does widen the window in which a leaked cookie could be
-replayed. A long clearance spares the user from redoing the *work*, not the
-*proof*. Keep the default unless you have a reason; lower it if cookie leakage
-is a concern in your environment.
+Cookies remain bound to their address/UA/policy context. Optional fetch proofs
+add key possession where required, but client-controlled fetch metadata does not
+prevent arbitrary HTTP clients from omitting that requirement. See
+[security.md](security.md) for the exact guarantees and limitations.
 
 nginx time syntax: `30m`, `12h`, `72h`, `90s`.
 
@@ -259,7 +284,7 @@ you see legitimate failures from clients with bad clocks.
 Controls whether a valid per-request proof (`X-Pow-Proof`) is **required** on
 fetch/XHR requests that present a clearance cookie.
 
-- `off` (default) — the cookie alone is accepted on every request (the proof
+- `off` (default) — a valid context-bound cookie is accepted on every request (the proof
   is still verified when present, but never demanded). This is the default
   because demanding the proof only works when the gated site's own pages can
   sign one, which needs page-side integration: something must load the
@@ -267,14 +292,13 @@ fetch/XHR requests that present a clearance cookie.
   make. Without that, `on` challenges all of the site's AJAX.
 - `on` — a request the browser marks as scripted fetch/XHR
   (`Sec-Fetch-Dest: empty`) must carry a valid proof signed by the
-  clearance-bound key; the cookie alone is **not** enough. This is what stops
-  a leaked clearance cookie from being replayed by `fetch`/XHR tooling that
-  mimics browser fetch metadata. Enable it only once your pages attach proofs
+  clearance-bound key; a context-bound cookie alone does not satisfy this
+  request shape. Enable it only once your pages attach proofs
   to their own `fetch`/XHR traffic.
 
 Only fetch/XHR calls can attach a custom header, and browsers mark exactly
 those with `Sec-Fetch-Dest: empty` — so everything else is always allowed on
-the cookie alone: top-level navigations, tag-driven subresource loads
+a valid context-bound cookie: top-level navigations, tag-driven subresource loads
 (`<script>`, `<img>`, `<link rel=stylesheet>`, fonts, media), and clients that
 send **no** `Sec-Fetch-*` metadata at all (older browsers, non-browser
 agents). Requiring a proof of those would challenge every static asset on a
@@ -319,7 +343,7 @@ sending back to that same client:
 `solver.js` re-issues it the moment the clearance cookie is set — as a real
 form submit for `application/x-www-form-urlencoded` bodies (so redirects,
 history and rendering keep their native semantics), through `fetch` otherwise.
-The gate stays stateless: nothing is stored server-side, because the client
+Request-body replay stores no server-side payload, because the client
 already has the data. The page carrying it is sent `Cache-Control: no-store`.
 
 Not captured (the request is lost exactly as it was before this existed — the
@@ -605,7 +629,7 @@ real_ip_header   X-Forwarded-For;
 
 ```nginx
 location /        { pow_gate on; pow_gate_difficulty 50000;  pow_gate_decision $pow_decision; }
-location /search/ { pow_gate on; pow_gate_difficulty 200000; pow_gate_decision $pow_decision; }
+location /search/ { pow_gate on; pow_gate_difficulty 200000; pow_gate_endpoint /search/.pow/; pow_gate_decision $pow_decision; }
 ```
 
 ---
@@ -633,6 +657,29 @@ Pick the smallest `N` that meaningfully taxes a scraping farm. Cost is linear in
 `N` for the attacker *and* the honest visitor — there's no free lunch, so combine
 with `limit_req` rather than cranking difficulty to extremes.
 
+### Global limits for regular traffic
+
+[`examples/regular-traffic-limits.conf`](../examples/regular-traffic-limits.conf)
+is a complete include for the `http {}` context. Initial budgets are 5 dynamic
+requests/second/IP (burst 20), 40 asset requests/second/IP (burst 80), 200 total
+requests/second (burst 100), 32 concurrent requests/IP and 300 total. Its zones
+reserve 5.125 MiB shared across workers, separately from the gate's 2 MiB zone.
+These are starting budgets, not measured Animexx capacity. It starts in dry-run
+mode: log `$limit_req_status` and `$limit_conn_status`, inspect representative
+traffic including shared NATs, then turn both dry-run directives off to enforce.
+No cookie or claimed bot User-Agent exempts traffic from these limits.
+
+The total uses one constant key across vhosts. Static classification only affects
+the per-IP budget; even a dynamic URL ending in `.js` remains under the total
+budget. Use actual static locations if your routing permits a stricter split.
+Existing server/location `limit_req` or `limit_conn` directives replace that
+directive family's inherited list: repeat all applicable limits there. HTTP/2
+and HTTP/3 count concurrent requests individually for connection limiting.
+See nginx's [request-limit](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html)
+and [connection-limit](https://nginx.org/en/docs/http/ngx_http_limit_conn_module.html)
+documentation. Request limits do not cap unauthenticated TCP handshakes or replace
+upstream capacity controls. Leave the site-specific upload limits where needed.
+
 ---
 
 ## Common mistakes
@@ -655,6 +702,6 @@ with `limit_req` rather than cranking difficulty to extremes.
   [troubleshooting.md](troubleshooting.md).
 - **Expecting non-JS clients to pass a challenge** → they can't. `allow` or
   exclude feeds, monitors, and other scripted-but-legitimate consumers.
-- **Different `pow_gate_hmac_key_file` / `pow_gate_endpoint` on the issuing vs.
+- **Different `pow_gate_hmac_key_file` / `pow_gate_endpoint` / `pow_gate_policy` on the issuing vs.
   gated location** → clearances won't validate. Set them at `http` and let them
   inherit unless you deliberately want per-vhost isolation.

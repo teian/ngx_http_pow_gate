@@ -29,13 +29,28 @@ fn payload_carries_method_url_type_and_body() {
 #[test]
 fn every_method_that_can_carry_data_is_replayed() {
     // Deny-list, not allow-list: the declared body decides, not a verb table.
-    for m in ["POST", "post", "PUT", "PATCH", "DELETE", "OPTIONS", "REPORT",
-              "SEARCH", "PROPFIND", "PROPPATCH", "LOCK", "MKCOL", "WHATEVER"] {
+    for m in [
+        "POST",
+        "post",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS",
+        "REPORT",
+        "SEARCH",
+        "PROPFIND",
+        "PROPPATCH",
+        "LOCK",
+        "MKCOL",
+        "WHATEVER",
+    ] {
         assert!(method_replayable(m), "{m} should be replayable");
         assert!(Captured::new(m, "/x", "", b"a").is_some());
     }
     // …except the ones with nothing to keep, plus junk tokens.
-    for m in ["GET", "get", "HEAD", "TRACE", "CONNECT", "", "PO ST", "P\rST", "PUT2"] {
+    for m in [
+        "GET", "get", "HEAD", "TRACE", "CONNECT", "", "PO ST", "P\rST", "PUT2",
+    ] {
         assert!(!method_replayable(m), "{m:?} must not be replayed");
         assert!(Captured::new(m, "/x", "", b"a").is_none());
     }

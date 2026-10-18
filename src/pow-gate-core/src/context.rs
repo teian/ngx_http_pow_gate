@@ -1,9 +1,10 @@
 //! Client and policy binding. Addresses and User-Agents never appear in tokens:
 //! only a domain-separated HMAC of their canonical context is exposed.
 
+use std::borrow::Cow;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use crate::{codec::b64url, mac::hmac_fields};
+use crate::{codec::b64url, HmacKey};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AddressPolicy {
@@ -45,6 +46,53 @@ impl AddressPolicy {
     }
 }
 
+/// Pre-serialized policy fields for the existing JSON scope representation.
+/// Host-only cookies still bind to the request host; domain cookies reuse the
+/// complete scope. Empty normalized hosts/domains fail closed.
+pub struct Scope {
+    tail: String,
+    domain: Option<String>,
+}
+
+impl Scope {
+    pub fn new(domain: Option<&str>, name: &str, path: &str, endpoint: &str, policy: &str) -> Self {
+        let fields =
+            serde_json::to_string(&(name, path, endpoint, policy)).expect("serialize scope");
+        let tail = format!(",{}", &fields[1..]);
+        let domain = domain.map(|domain| {
+            let domain = domain.trim_start_matches('.').to_ascii_lowercase();
+            if domain.is_empty() {
+                return String::new();
+            }
+            format!(
+                "[{}{tail}",
+                serde_json::to_string(&domain).expect("serialize domain")
+            )
+        });
+        Self { tail, domain }
+    }
+
+    pub fn for_host<'a>(&'a self, host: &str) -> Option<Cow<'a, str>> {
+        if let Some(domain) = &self.domain {
+            return (!domain.is_empty()).then_some(Cow::Borrowed(domain));
+        }
+        let host = host.trim_start_matches('.');
+        if host.is_empty() {
+            return None;
+        }
+        let host = if host.bytes().any(|b| b.is_ascii_uppercase()) {
+            Cow::Owned(host.to_ascii_lowercase())
+        } else {
+            Cow::Borrowed(host)
+        };
+        let mut scope = Vec::with_capacity(host.len() + self.tail.len() + 3);
+        scope.push(b'[');
+        serde_json::to_writer(&mut scope, &host).ok()?;
+        scope.extend_from_slice(self.tail.as_bytes());
+        Some(Cow::Owned(String::from_utf8(scope).ok()?))
+    }
+}
+
 /// Scope includes the configured cookie domain (or request host), cookie name,
 /// cookie path, endpoint and operator-selected policy name. `issuer` identifies
 /// the worker-shared redemption store; independent stores cannot accept each
@@ -57,20 +105,29 @@ pub fn binding(
     issuer: &[u8],
     address: AddressPolicy,
 ) -> Option<String> {
+    binding_prepared(&HmacKey::new(key), ip, user_agent, scope, issuer, address)
+}
+
+/// Bind a request using a reusable key schedule; framing stays protocol v2.
+pub fn binding_prepared(
+    key: &HmacKey,
+    ip: IpAddr,
+    user_agent: &str,
+    scope: &str,
+    issuer: &[u8],
+    address: AddressPolicy,
+) -> Option<String> {
     let network = address.network(ip)?;
     let network = network.to_string();
     let prefixes = [address.ipv4_prefix, address.ipv6_prefix];
-    Some(b64url(&hmac_fields(
-        key,
-        &[
-            b"pow-gate-context-v2",
-            network.as_bytes(),
-            user_agent.as_bytes(),
-            scope.as_bytes(),
-            issuer,
-            &prefixes,
-        ],
-    )))
+    Some(b64url(&key.fields(&[
+        b"pow-gate-context-v2",
+        network.as_bytes(),
+        user_agent.as_bytes(),
+        scope.as_bytes(),
+        issuer,
+        &prefixes,
+    ])))
 }
 
 /// Assurance is authenticated in both challenges and clearances. A cheap/no-JS

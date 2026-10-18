@@ -15,3 +15,6 @@ dist-local/
 # Playwright MCP session artifacts (snapshots from browser-driven testing)
 .playwright-mcp/
 docker/challenge.dev.html
+
+/tests/browser/node_modules/
+/experiments/pow/target/

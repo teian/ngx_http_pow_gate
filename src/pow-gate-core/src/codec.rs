@@ -13,6 +13,17 @@ pub fn unb64url(s: &str) -> Option<Vec<u8>> {
     B64.decode(s).ok()
 }
 
+/// Decode into caller-owned storage, retaining the strict unpadded format.
+pub fn unb64url_into(s: &str, output: &mut [u8]) -> Option<usize> {
+    B64.decode_slice(s, output).ok()
+}
+
+/// Decode an exact-width protocol value without allocating.
+pub fn unb64url_fixed<const N: usize>(s: &str) -> Option<[u8; N]> {
+    let mut output = [0; N];
+    (unb64url_into(s, &mut output)? == N).then_some(output)
+}
+
 /// Lowercase hex.
 pub fn hex(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);

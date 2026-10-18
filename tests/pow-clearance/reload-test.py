@@ -68,6 +68,7 @@ http {{
 '''
     config = root / 'nginx.conf'; config.write_text(configuration())
     subprocess.run([str(nginx), '-p', str(root) + '/', '-c', str(config)], check=True)
+    poll(lambda: (root / 'nginx.pid').exists() and (root / 'nginx.pid').read_text().strip().isdigit(), 'nginx did not write its pid file')
     pid = int((root / 'nginx.pid').read_text())
     def body():
         with urllib.request.urlopen(f'http://127.0.0.1:{port}/', timeout=2) as response:

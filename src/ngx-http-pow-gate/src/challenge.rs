@@ -6,7 +6,7 @@
 //! `/.pow/`):
 //!
 //!   GET  {endpoint}challenge  → fresh challenge params (difficulty, salt, exp)
-//!   GET  {endpoint}solver.js  → the WASM/JS proof-of-work + signing client
+//!   GET  {endpoint}solver.js  → the browser proof-of-work + signing client
 //!   POST {endpoint}verify     → submit solution + pubkey; sets clearance cookie
 //!
 //! The crypto behind `/challenge` and `/verify` lives in `src/engine/`.
@@ -24,7 +24,7 @@
 //!     engine, so it ships with the module.
 
 use ngx::core::Status;
-use ngx::ffi::{ngx_conf_t, ngx_pnalloc, ngx_str_t, ngx_uint_t};
+use ngx::ffi::{ngx_conf_t, ngx_http_request_t, ngx_pnalloc, ngx_str_t, ngx_uint_t};
 use ngx::http::{HTTPStatus, Request};
 
 use crate::response::{as_bytes, as_str, send_and_finish};
@@ -46,6 +46,20 @@ pub const SOLVER_JS: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../assets/solver.js"
 ));
+
+/// An immutable cache key must change for every byte change, including local
+/// builds that keep the package version. Protocol responses remain no-store.
+fn solver_query() -> &'static str {
+    use sha2::{Digest, Sha256};
+    static QUERY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    QUERY.get_or_init(|| {
+        format!(
+            "v={}-{}",
+            env!("CARGO_PKG_VERSION"),
+            pow_gate_core::codec::b64url(&Sha256::digest(SOLVER_JS))
+        )
+    })
+}
 
 /// Embedded no-JS (meta-refresh) challenge page, served on `challenge:nojs`
 /// decisions. Overridable with `pow_gate_nojs_page`. Placeholders
@@ -88,7 +102,7 @@ pub fn load_page(
 
     // Protocol upgrades must not run a previously cached solver. This covers
     // the embedded page and existing custom templates using the documented src.
-    let versioned = format!("{{{{endpoint}}}}solver.js?v={}", env!("CARGO_PKG_VERSION"));
+    let versioned = format!("{{{{endpoint}}}}solver.js?{}", solver_query());
     let raw = replace_all(
         &raw,
         b"{{endpoint}}solver.js\"",
@@ -192,8 +206,17 @@ fn replace_all(haystack: &[u8], needle: &[u8], with: &[u8]) -> Vec<u8> {
 /// `{endpoint}solver.js`, POSTs `{endpoint}verify`, and reloads on success — the
 /// module owns those internal endpoints (routed in [`route_internal`]).
 pub fn serve_challenge_page(r: &mut Request, page: &ngx_str_t) -> Status {
-    let body = unsafe { as_bytes(page) };
-    send_and_finish(r, HTTPStatus::OK, "text/html; charset=utf-8", body, None)
+    // All callers supply the configuration-pool page_cache. Its nginx cycle
+    // remains alive while any request (including buffered output) uses it.
+    unsafe {
+        crate::response::send_cached_and_finish(
+            r,
+            HTTPStatus::OK,
+            "text/html; charset=utf-8",
+            as_bytes(page),
+            &[],
+        )
+    }
 }
 
 /// Dispatch a request to `{endpoint}*` to the right engine handler.
@@ -214,18 +237,39 @@ pub fn route_internal(
     let raw = r as *mut Request as *mut ngx::ffi::ngx_http_request_t;
     let method = unsafe { as_str(&(*raw).method_name) };
     let method_ok = match suffix {
-        "challenge" | "pass" => method == "GET",
+        "challenge" | "pass" | "status" => method == "GET",
         "solver.js" => method == "GET" || method == "HEAD",
         "verify" => method == "POST",
         _ => true,
     };
+    if matches!(suffix, "challenge" | "pass" | "status" | "verify")
+        || (suffix == "solver.js" && !method_ok)
+    {
+        crate::response::no_store(r);
+    }
     if !method_ok {
         return Some(HTTPStatus::NOT_ALLOWED.into());
     }
     match suffix {
         "challenge" => Some(crate::engine::pow::issue_challenge(r, cfg, required)),
-        "solver.js" => Some(serve_solver(r)),
+        "solver.js" => {
+            crate::observability::record(r, "asset", "solver", 0);
+            Some(serve_solver(r))
+        }
         "verify" => Some(crate::engine::pow::verify_solution(r)),
+        "status" => Some(
+            if crate::engine::clearance::has_valid_clearance(r, cfg, required) {
+                send_and_finish(r, HTTPStatus::NO_CONTENT, "text/plain", &[], None)
+            } else {
+                send_and_finish(
+                    r,
+                    HTTPStatus::CONFLICT,
+                    "text/plain",
+                    b"clearance missing or invalid\n",
+                    None,
+                )
+            },
+        ),
         "pass" => Some(crate::engine::nojs::pass(r, cfg, nojs_template, required)),
         _ => None,
     }
@@ -234,11 +278,20 @@ pub fn route_internal(
 /// Serve the solver: `200 OK`, `Content-Type: text/javascript`, body =
 /// [`SOLVER_JS`] (always the module-provided embedded solver).
 fn serve_solver(r: &mut Request) -> Status {
-    send_and_finish(
-        r,
-        HTTPStatus::OK,
-        "text/javascript; charset=utf-8",
-        SOLVER_JS,
-        None,
-    )
+    let raw = r as *mut Request as *mut ngx_http_request_t;
+    let cache = if unsafe { as_str(&(*raw).args) } == solver_query() {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-store"
+    };
+    // The embedded asset is static and nginx's memory flag forbids writes.
+    unsafe {
+        crate::response::send_cached_and_finish(
+            r,
+            HTTPStatus::OK,
+            "text/javascript; charset=utf-8",
+            SOLVER_JS,
+            &[("Cache-Control", cache)],
+        )
+    }
 }

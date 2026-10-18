@@ -1,6 +1,6 @@
 [package]
 name = "ngx-http-pow-gate"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.85"
 description = "nginx dynamic module: proof-of-work gate for bot/scraper mitigation"
@@ -22,9 +22,10 @@ ngx = "0.5"
 
 # The nginx-free engine: all PoW / clearance / proof crypto, unit-tested on its
 # own (see ../pow-gate-core and docs/testing.md). This crate is a thin FFI shell.
-pow-gate-core = { path = "../pow-gate-core" }
+pow-gate-core = { path = "../pow-gate-core", features = ["native-crypto"] }
 
 # Remaining module-side dependencies (good-bot verifier + JSON).
+sha2 = "0.10"           # content fingerprint for the shared solver asset
 arc-swap = "1"          # lock-free hot-swap of refreshed IP-range tables
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"        # /verify body + crawler ip_ranges JSON feeds

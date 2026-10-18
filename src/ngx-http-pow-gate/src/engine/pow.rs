@@ -11,7 +11,7 @@ use ngx::ffi::{
     NGX_HTTP_SPECIAL_RESPONSE,
 };
 use ngx::http::{HTTPStatus, Request};
-use pow_gate_core::{clearance, codec, context::Assurance, pow, proof, redemption::Outcome};
+use pow_gate_core::{clearance, codec, context::Assurance, pow, proof};
 
 use crate::body_limit::VERIFY_LIMIT;
 use crate::response::{self, send_and_finish};
@@ -29,7 +29,8 @@ const CHALLENGE_GRACE: i64 = 120;
 /// holds the client to exactly this value.
 pub fn issue_challenge(r: &mut Request, cfg: &Cfg, required: Assurance) -> Status {
     // No usable HMAC key -> refuse rather than issue a forgeable challenge token.
-    if !cfg.key_ok {
+    if !cfg.key_ok || (crate::cluster::enabled() && !crate::cluster::available()) {
+        crate::observability::record(r, "error", "issuer_unavailable", 0);
         return send_and_finish(
             r,
             HTTPStatus::SERVICE_UNAVAILABLE,
@@ -38,6 +39,7 @@ pub fn issue_challenge(r: &mut Request, cfg: &Cfg, required: Assurance) -> Statu
             None,
         );
     }
+    crate::observability::record(r, "rejected", "invalid_key", 0);
     let Assurance::Pow { difficulty } = required else {
         return HTTPStatus::BAD_REQUEST.into();
     };
@@ -58,6 +60,7 @@ pub fn issue_challenge(r: &mut Request, cfg: &Cfg, required: Assurance) -> Statu
         runtime::now(),
         CHALLENGE_GRACE,
     );
+    crate::observability::record(r, "issued", "pow", difficulty);
     let body = serde_json::to_vec(&challenge).unwrap_or_default();
     response::send_and_finish_with_headers(
         r,
@@ -71,6 +74,7 @@ pub fn issue_challenge(r: &mut Request, cfg: &Cfg, required: Assurance) -> Statu
 /// `POST {endpoint}verify` → read the body asynchronously, then verify in
 /// [`verify_body`]. Returns `NGX_DONE` so the phase engine waits for the body.
 pub fn verify_solution(r: &mut Request) -> Status {
+    crate::observability::record(r, "rejected", "invalid_submission", 0);
     let raw: *mut ngx_http_request_t = r as *mut Request as *mut ngx_http_request_t;
     if unsafe { (*raw).headers_in.content_length_n } > VERIFY_LIMIT as i64 {
         return HTTPStatus::REQUEST_ENTITY_TOO_LARGE.into();
@@ -118,6 +122,7 @@ extern "C" fn verify_body(r: *mut ngx_http_request_t) {
         None => return finalize_status(req, HTTPStatus::BAD_REQUEST),
     };
     let cfg = runtime::resolve(lc);
+    crate::observability::record(req, "rejected", "invalid_submission", cfg.difficulty);
     // No usable HMAC key -> refuse to mint a clearance (it would be forgeable).
     if !cfg.key_ok {
         return finalize_status(req, HTTPStatus::SERVICE_UNAVAILABLE);
@@ -133,7 +138,7 @@ extern "C" fn verify_body(r: *mut ngx_http_request_t) {
         Err(_) => return finalize_status(req, HTTPStatus::BAD_REQUEST),
     };
 
-    let required = crate::access::required_assurance(req, lc, &cfg);
+    let required = crate::access::required_assurance(req, lc, cfg);
     let Assurance::Pow { difficulty } = required else {
         return finalize_status(req, HTTPStatus::BAD_REQUEST);
     };
@@ -141,7 +146,7 @@ extern "C" fn verify_body(r: *mut ngx_http_request_t) {
         Some(pk) if proof::valid_public_key(&pk) => pk,
         _ => return finalize_status(req, HTTPStatus::BAD_REQUEST),
     };
-    let Some(context) = runtime::client_context(req, &cfg) else {
+    let Some(context) = runtime::client_context(req, cfg) else {
         return finalize_status(req, HTTPStatus::SERVICE_UNAVAILABLE);
     };
     let challenge = pow::Challenge {
@@ -163,23 +168,16 @@ extern "C" fn verify_body(r: *mut ngx_http_request_t) {
     if !proof::verify_challenge(&pk, &challenge.token, &signature) {
         return finalize_status(req, HTTPStatus::BAD_REQUEST);
     }
-    // Consume only after ALL cryptographic and policy checks have passed.
-    // The nginx shared mutex makes this atomic across every worker.
-    match crate::redemption::consume(&challenge.token, challenge.exp) {
-        Outcome::Accepted => {}
-        Outcome::Reused => return finalize_status(req, HTTPStatus::CONFLICT),
-        Outcome::Expired => return finalize_status(req, HTTPStatus::BAD_REQUEST),
-        _ => return finalize_status(req, HTTPStatus::SERVICE_UNAVAILABLE),
-    }
+    // Prepare a response only after cryptographic validation. The backend owns
+    // completion and can mint clearance only after an authoritative acceptance.
     let token = clearance::issue(&cfg.key, &pk, &context, required, now, cfg.clearance_ttl);
-    let set_cookie = runtime::build_set_cookie(&token, &cfg.cookie);
-    let _ = response::send_and_finish_with_headers(
-        req,
-        HTTPStatus::NO_CONTENT,
-        "text/plain",
-        &[],
-        &[("Set-Cookie", &set_cookie), ("Cache-Control", "no-store")],
-    );
+    let grant = crate::redemption::Grant {
+        cookie: runtime::build_set_cookie(&token, &cfg.cookie),
+        redirect: None,
+        difficulty,
+        kind: "pow",
+    };
+    crate::redemption::redeem(req, &challenge.token, challenge.exp, grant);
 }
 
 /// Finalize with a terse error response — used for the `400`/`503` paths.

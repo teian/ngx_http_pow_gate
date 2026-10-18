@@ -165,6 +165,9 @@
   }
 
   // ───────────────────────────── page mode ────────────────────────────────
+  // The inline bootstrap can retry script loading without starting two solvers.
+  if (window.__POW_STARTED__) return;
+  window.__POW_STARTED__ = true;
   var el = document.currentScript;
   var SRC = (el && el.src) || "";
   var ENDPOINT = (el && el.dataset.endpoint) || "/.pow/";
@@ -189,7 +192,48 @@
     if (bar) { ("value" in bar) ? (bar.value = p) : (bar.style.width = p + "%"); }
     var num = $("pow-percent"); if (num) num.textContent = String(Math.floor(p));
   };
-  var fail = function () { var n = $("pow-error"); if (n) n.style.display = "block"; };
+  var fail = function (error) {
+    var n = $("pow-error"); if (n) n.style.display = "block";
+    status(tr("error_failed", "Verification failed. Please retry."));
+    var detail = $("pow-error-detail");
+    if (detail) detail.textContent = error && error.message ? error.message : "";
+  };
+  var STOPPED = false;
+  var stopSolve = null;
+  window.addEventListener("pagehide", function () { STOPPED = true; if (stopSolve) stopSolve(); });
+
+  function transient(status) { return [408, 425, 429, 500, 502, 503, 504].indexOf(status) !== -1; }
+  function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+  async function fetchBounded(url, init, retry) {
+    var error;
+    for (var i = 0; i < (retry ? 4 : 1); i++) {
+      if (STOPPED) throw new Error("Page closed");
+      var controller = new AbortController();
+      var timer = setTimeout(function () { controller.abort(); }, 10000);
+      var response;
+      try {
+        response = await fetch(url, Object.assign({}, init, { signal: controller.signal }));
+        // Consume GET bodies under the same deadline, including a stalled stream.
+        if (response.ok && init && init.readJSON) {
+          var data = await response.json();
+          return data;
+        }
+        if (!retry || !transient(response.status)) return response;
+        error = new Error("HTTP " + response.status);
+      } catch (e) { error = e; }
+      finally { clearTimeout(timer); }
+      if (retry && i < 3) {
+        var delay = Math.random() * Math.min(2000, 250 * Math.pow(2, i));
+        var after = response && response.headers.get("Retry-After");
+        if (after) {
+          var seconds = Number(after);
+          delay = Math.min(5000, Math.max(0, Number.isFinite(seconds) ? seconds * 1000 : Date.parse(after) - Date.now()) || delay);
+        }
+        await sleep(delay);
+      }
+    }
+    throw error || new Error("Request failed");
+  }
 
   // ───────────────────────── byte / base64url helpers ─────────────────────────
   function b64url(bytes) {
@@ -365,19 +409,22 @@
   // challenge and try again — NOT dead-end into the error box.
   async function attempt(kp) {
     status(tr("requesting", "Requesting challenge…"));
-    var ch = await fetch(ENDPOINT + "challenge", {
-      credentials: "same-origin", cache: "no-store",
+    var ch = await fetchBounded(ENDPOINT + "challenge", {
+      credentials: "same-origin", cache: "no-store", readJSON: true,
       headers: { "X-Pow-Key": b64url(kp.pubRaw) },
-    })
-      .then(function (r) { return r.json(); });
+    }, true);
+    if (!ch || ch.version !== 2 || !Number.isSafeInteger(ch.difficulty) || ch.difficulty < 1 ||
+        !Number.isFinite(ch.exp) || ch.exp <= Date.now() / 1000 ||
+        typeof ch.salt !== "string" || typeof ch.token !== "string")
+      throw new Error("Invalid or expired challenge response");
 
     status(tr("verifying", "Verifying…"));
     var difficulty = ch.difficulty || DIFFICULTY;
     var t0 = performance.now();
-    var nonce = await solve(ch.salt, difficulty, percent);
+    var nonce = await solve(ch.salt, difficulty, percent, ch.exp);
     var solveMs = Math.round(performance.now() - t0);
 
-    var res = await fetch(ENDPOINT + "verify", {
+    var res = await fetchBounded(ENDPOINT + "verify", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
@@ -392,7 +439,7 @@
         // the difficulty it issued (per-decision overrides, challenge:<N>)
         difficulty: difficulty,
       }),
-    });
+    }, false);
     if (res.ok && RECORD_RESULT) recordResult(ch.salt, difficulty, nonce, solveMs);
     return res.ok;
   }
@@ -412,18 +459,50 @@
     } catch (e) { /* informational only */ }
   }
 
+  // A bad content/endpoint policy mapping can accept the endpoint cookie but
+  // challenge the next navigation again. Bound that cycle across reloads when
+  // session storage is available. Normal access after success runs no solver;
+  // old markers expire, and a displayed error clears the marker for manual retry.
+  function navigationCount(increment) {
+    try {
+      var key = "pow-navigation-recovery";
+      var value = JSON.parse(sessionStorage.getItem(key) || "null");
+      if (!value || value.path !== location.href || Date.now() - value.at > 300000)
+        value = { path: location.href, at: Date.now(), count: 0 };
+      if (increment) { value.count++; sessionStorage.setItem(key, JSON.stringify(value)); }
+      else if (value.count >= 3) sessionStorage.removeItem(key);
+      return value.count;
+    } catch (e) { return 0; }
+  }
+
   var RETRIES = 3;
   async function run() {
     try {
+      if (navigationCount(false) >= 3) throw new Error("Page still requires verification. Check policy and cookie scope, then retry.");
       status(tr("preparing", "Preparing…"));
       var kp = await getKeypair();
 
       var ok = false;
       for (var i = 0; i < RETRIES && !ok; i++) {
         if (i > 0) percent(0);
-        ok = await attempt(kp);
+        try {
+          ok = await attempt(kp);
+          if (ok) {
+            // HttpOnly cookies cannot be inspected from JS. Check server-side
+            // acceptance before navigating, so blocked cookies never loop.
+            var ready = await fetchBounded(ENDPOINT + "status", {
+              credentials: "same-origin", cache: "no-store",
+              headers: { "X-Pow-Proof": await signProof(kp.privateKey, "GET", new URL(ENDPOINT + "status", location.href).pathname) },
+            }, true);
+            ok = ready.ok;
+            if (!ok) status("Clearance cookie was not accepted. Retrying…");
+          }
+        } catch (e) {
+          if (STOPPED || i === RETRIES - 1) throw e;
+          await sleep(Math.random() * Math.min(2000, 250 * Math.pow(2, i)));
+        }
       }
-      if (!ok) throw new Error("verify rejected " + RETRIES + " times");
+      if (!ok) throw new Error("Clearance was not accepted. Check cookie settings and retry.");
 
       installProofFetch(kp.privateKey);
       status(tr("done", "Done"));
@@ -432,6 +511,7 @@
       // Re-issue the captured request if there was one; a failure there must
       // still land the (now cleared) client on the page, so fall back to the
       // reload rather than into the error box.
+      navigationCount(true);
       var rq = readReplay();
       if (rq) {
         status(tr("resending", "Resending your request…"));
@@ -441,7 +521,7 @@
       location.reload();
     } catch (e) {
       console.error("[pow]", e);
-      fail();
+      if (!STOPPED) fail(e);
     }
   }
 
@@ -469,20 +549,28 @@
   // tries i, i+W, i+2W, … First hit wins; everyone else is terminated. Any
   // full-crew failure (CSP worker-src, spawn error, self-test) rejects and
   // the caller falls back to the in-page loop.
-  function solveParallel(salt, target, difficulty, onProgress) {
+  function solveParallel(salt, target, difficulty, onProgress, expires) {
     return new Promise(function (resolve, reject) {
       var W = Math.min(navigator.hardwareConcurrency || 4, 8);
       // Progress granularity: ~50 updates per expected solve, bounded so slow
       // devices still see movement and fast ones don't flood the channel.
-      var every = Math.max(256, Math.min(65536, (difficulty / 50) | 0));
+      var every = Math.max(256, Math.min(4096, Math.floor(difficulty / 50)));
       var workers = [], total = 0, failed = 0, settled = false;
+      var lastOutput = performance.now();
+      var watchdog = setInterval(function () {
+        if (STOPPED || Date.now() / 1000 >= expires) finish(reject, new Error("Challenge expired"));
+        else if (performance.now() - lastOutput > 5000) finish(reject, new Error("Workers stopped responding"));
+      }, 250);
 
       var finish = function (fn, arg) {
         if (settled) return;
         settled = true;
+        clearInterval(watchdog);
+        stopSolve = null;
         for (var k = 0; k < workers.length; k++) workers[k].terminate();
         fn(arg);
       };
+      stopSolve = function () { finish(reject, new Error("Page closed")); };
       var oneFailed = function () {
         if (++failed >= W) finish(reject, new Error("all workers failed"));
       };
@@ -492,6 +580,7 @@
         try { w = new Worker(SRC); }
         catch (e) { finish(reject, e); return; }
         w.onmessage = function (ev) {
+          lastOutput = performance.now();
           var m = ev.data || {};
           if (m.n != null) finish(resolve, m.n);
           else if (m.h) { total += m.h; onProgress(cdfPercent(total, difficulty)); }
@@ -507,10 +596,11 @@
   // In-page fallback, chunked so the UI thread can paint progress between
   // batches. Uses the pure-JS hasher when it passed its self-test, else the
   // (much slower, but battle-tested) crypto.subtle path.
-  async function solveSequential(salt, target, difficulty, onProgress) {
+  async function solveSequential(salt, target, difficulty, onProgress, expires) {
     var nonce = 0;
     var batch = PUREJS ? 4096 : 500;
     while (true) {
+      if (STOPPED || Date.now() / 1000 >= expires) throw new Error("Challenge expired");
       for (var i = 0; i < batch; i++) {
         var h = PUREJS ? sha256Str(salt + nonce) : await sha256Subtle(salt + nonce);
         if (below(h, target)) return nonce;
@@ -521,13 +611,13 @@
     }
   }
 
-  async function solve(salt, difficulty, onProgress) {
+  async function solve(salt, difficulty, onProgress, expires) {
     var target = difficultyToTarget(difficulty);
     if (PUREJS && SRC && typeof Worker !== "undefined") {
-      try { return await solveParallel(salt, target, difficulty, onProgress); }
+      try { return await solveParallel(salt, target, difficulty, onProgress, expires); }
       catch (e) { /* workers unavailable (CSP, spawn failure) — fall back */ }
     }
-    return solveSequential(salt, target, difficulty, onProgress);
+    return solveSequential(salt, target, difficulty, onProgress, expires);
   }
 
   if (document.readyState === "loading")

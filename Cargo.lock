@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "ngx-http-pow-gate"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "arc-swap",
  "libc",
@@ -773,6 +773,7 @@ dependencies = [
  "pow-gate-core",
  "serde",
  "serde_json",
+ "sha2",
  "ureq",
 ]
 
@@ -889,14 +890,16 @@ dependencies = [
 
 [[package]]
 name = "pow-gate-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64",
  "criterion",
  "getrandom",
  "hmac",
+ "libc",
  "p256",
  "rand_core",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

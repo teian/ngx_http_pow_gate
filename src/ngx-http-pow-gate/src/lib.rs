@@ -27,8 +27,10 @@
 mod access;
 mod body_limit;
 mod challenge;
+mod cluster;
 mod config;
 mod engine;
+mod observability;
 mod redemption;
 mod replay;
 mod response;
@@ -55,7 +57,7 @@ use config::{
 ///   is built — that is what actually puts the gate in the request pipeline.
 #[no_mangle]
 static NGX_HTTP_POW_GATE_MODULE_CTX: ngx_http_module_t = ngx_http_module_t {
-    preconfiguration: None,
+    preconfiguration: Some(observability::register),
     postconfiguration: Some(postconfiguration),
     create_main_conf: Some(create_main_conf),
     init_main_conf: None,

@@ -44,7 +44,7 @@ scripts/test.sh     runs the whole thing locally
 ## 1. Core unit tests (no Docker)
 
 The engine — PoW target math, the challenge handshake, clearance tokens, and the
-ECDSA proof — is a pure-Rust crate (`src/pow-gate-core/`) with no nginx
+ECDSA proof — defaults to a pure Rust crate (`src/pow-gate-core/`) with no nginx
 dependency, so it runs on any machine in well under a second:
 
 ```bash
@@ -219,11 +219,12 @@ CI is split across a few workflows:
 | nginx-smoke-{debian,alpine}  | the module loads and every directive parses, on both libc          | Docker  |
 | e2e          | the live request flow works end to end against real nginx (per libc) | Docker  |
 
-The 2026-10-18 local review passed 63 core tests, two updater regression tests,
-native glibc/amd64 builds and `nginx -t` on 1.31.7 and 1.30.6, the full live
-Rust/Node HTTP/1.1 and HTTP/2 suites on both versions, and early/late failed-reload
-regressions. The full Docker musl/arm64 matrix is configured in CI and was not
-executed locally during this review.
+The 2026-10-18 performance pass passed 73 portable and 74 native-crypto core
+tests, two updater regression tests, and native glibc/amd64 builds and live
+suites on nginx 1.31.7 and 1.30.6. All eight Docker end-to-end cells passed across
+both nginx channels, Debian/glibc and Alpine/musl, and amd64/arm64. Failed-reload
+Docker targets passed on both channels and architectures. Local ARM64 execution
+uses QEMU for correctness checks. Performance tests run only on Linux/amd64.
 
 The HTTP/3 follow-up also passed on both versions with four workers, using native
 glibc/amd64 HTTP/3-enabled nginx. Both the existing distributable modules and
@@ -300,3 +301,104 @@ hashes/runtime image digests live in `docker/nginx-versions.json`. Use:
 The daily updater checks the newest odd-minor mainline and even-minor stable
 release independently, and retains the previous channel pin until both runtime
 images exist. Release artifacts include the exact nginx version in their names.
+
+## 0.5.0 resilience and cluster regressions
+
+With a configured native nginx tree and matching module build:
+
+```sh
+export POW_NGINX="$PWD/.nginx/nginx-1.31.7/objs/nginx"
+export POW_MODULE="$PWD/target/debug/libngx_http_pow_gate.so"
+python3 tests/pow-clearance/native-test.py "$POW_NGINX" "$POW_MODULE"
+python3 tests/pow-clearance/reload-test.py "$POW_NGINX" "$POW_MODULE"
+python3 tests/pow-clearance/feeds-test.py "$POW_NGINX" "$POW_MODULE"
+npm ci --ignore-scripts --prefix tests/browser
+(cd tests/browser && npx playwright install chromium firefox)
+npm test --prefix tests/browser
+```
+
+The browser suite starts an isolated nginx and uses real WebCrypto and workers.
+It tests normal clearance, worker-blocking CSP, transient reset/429, lost verify
+responses after server commit, failed initial script loads, unavailable IndexedDB,
+silent workers, old cookie names, cookie refusal and concurrent tabs. Both
+Chromium and Firefox are covered. `POW_BROWSERS=chromium` narrows the run; optional
+`POW_CHROMIUM` / `POW_FIREFOX` select executable paths. Browser/module copies are
+isolated so rebuilding the module cannot overwrite a mapped test binary.
+
+The feed suite runs two providers with independent failure/expiry and rejects
+zero/invalid/overflowing refresh times. The native suite runs the existing
+security, HTTP/2 streaming-body and handshake tests against the default local
+ledger; the reload suite checks configuration-cycle lifetime after failed reloads.
+
+For Redis, first start a **dedicated disposable** primary:
+
+```sh
+docker run -d --name pow-gate-test-redis -p 127.0.0.1:16379:6379 redis:8-alpine \
+  redis-server --maxmemory 16mb --maxmemory-policy noeviction --save '' --appendonly no
+node tests/pow-clearance/cluster-test.mjs
+docker rm -f pow-gate-test-redis
+```
+
+`POW_REDIS` selects a numeric host:port (default `127.0.0.1:16379`). This suite
+changes global Redis memory configuration and deliberately pauses the primary;
+never point it at a shared/deployed service. It creates random test namespaces,
+cleans its own keys, and uses isolated nginx masters. It includes the existing
+security and HTTP/2 suites plus cross-node redemption races, no-JS, restart/reload,
+ACL authentication, OOM, clock high-water, queue/deadline limits, client aborts,
+namespace separation, epoch rotation and missing-state fencing.
+
+CI runs these native/browser/Redis suites on both pinned nginx channels, in
+addition to the existing libc/architecture build/e2e matrix. The standalone
+[PoW experiment](../experiments/pow/README.md) is a manual benchmark, outside the
+production dependency graph.
+
+
+Local v0.5.0 validation (2026-10-18) passed Chromium/Firefox recovery suites,
+native HTTP/1.1 and HTTP/2 security suites, failed-reload, feed and gzip tests,
+and the real Redis cross-node/failure suite on nginx 1.31.7 and 1.30.6 (glibc,
+amd64). Redis compatibility checks also passed against the retained pre-performance
+module in both issuance directions. Real TLS/QUIC HTTP/3 suites passed on both
+versions with local and Redis backends, including early streaming-body rejection.
+The complete libc/architecture Docker matrix passed as described above.
+
+For the HTTP/3 fixtures, build nginx with `--with-http_ssl_module
+--with-http_v3_module`, install `tests/pow-clearance/http3-requirements.txt` in a
+venv, and invoke `tests/pow-clearance/transport-test.py <nginx> <module>` from that
+venv. Set `POW_REDIS=127.0.0.1:16379` to run both backends. The script creates its
+own TLS certificate, ports, prefix and module copy.
+
+The module enables the core's `native-crypto` feature for ring's HMAC and P-256 routines.
+Run both implementations when changing authentication:
+
+```bash
+cargo test --locked -p pow-gate-core
+cargo test --locked -p pow-gate-core --features native-crypto
+```
+
+Compatibility tests compare the accelerated verifier against RustCrypto using
+valid, mutated, malformed, high-S/low-S signatures and compressed/uncompressed
+keys. They also check prepared HMAC framing against an independent HMAC and
+scope serialization against the existing JSON tuple representation.
+
+Docker module and end-to-end client builds retain Cargo caches per architecture
+(and, for modules, per libc). The exported module/client binary is copied outside
+the cache mount. Source crate roots are touched before compilation so older
+copied timestamps cannot hide changed code. `--build-arg CARGO_BUILD_JOBS=2`
+optionally bounds local build parallelism; leaving it unset preserves Cargo's
+default. BuildKit caches can be pruned without changing build correctness.
+
+## Allocation follow-up, 2026-10-18
+
+The allocation follow-up passes 78 portable and 79 native-crypto core tests.
+`clearance_fast.rs` compares against the original verifier, including signed
+malformed/escaped JSON, duplicate fields, extreme timestamps, exact 4 KiB tokens
+and normal-token allocation counts (six reduced to one). The gzip fixture now
+checks repeated shared-body reads, HTML/JavaScript compression, HEAD and a slow
+reader of a 736 KiB rendered custom page.
+
+Both pinned nginx channels pass native wire, reload, feed, gzip, Chromium/Firefox,
+Redis previous/current compatibility and real TLS/QUIC HTTP/3 suites. All four
+Linux/amd64 Docker glibc/musl end-to-end cells and both failed-reload targets pass.
+ARM64 results elsewhere in this document describe the earlier performance pass.
+All performance measurements are Linux/amd64 only; the follow-up benchmark adds
+physical-core separation, client/server CPU accounting and concurrency sweeps.

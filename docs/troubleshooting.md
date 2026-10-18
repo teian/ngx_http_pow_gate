@@ -47,7 +47,7 @@ Request a broken asset directly and look at the `content-type`:
 ```bash
 curl -s -o /dev/null -w '%{http_code} %{content_type}\n' \
   -H 'sec-fetch-mode: no-cors' -H 'sec-fetch-dest: image' \
-  -H 'cookie: pow_clearance=<paste from browser devtools>' \
+  -H 'cookie: <effective-cookie-name>=<paste from browser devtools>' \
   https://example.com/some/image.png
 ```
 

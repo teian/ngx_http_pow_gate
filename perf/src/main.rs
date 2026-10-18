@@ -7,8 +7,8 @@
 //!   proof      GET / with cookie + X-Pow-Proof      — adds the ECDSA proof verify
 //!
 //! The `cleared` vs `proof` gap is the cost of the per-request proof (ECDSA),
-//! which the microbenchmarks (`cargo bench -p pow-gate-core`) show is ~100× the
-//! HMAC clearance check. See docs/performance.md.
+//! alongside client-side signing, scheduling and network costs. The isolated
+//! verifier microbenchmarks and comparison methodology are in docs/performance.md.
 //!
 //! Env: BASE_URL (default http://localhost:8080), PERF_DURATION secs (default 5),
 //!      PERF_CONCURRENCY (default 8), PERF_MODES (csv, default all).
@@ -152,13 +152,20 @@ fn one_request(agent: &ureq::Agent, base: &str, mode: Mode, id: &Identity) -> Op
         Mode::Challenge => b"solver.js",
         Mode::Cleared | Mode::Proof => b"upstream-content",
     };
-    if !preview.windows(marker.len()).any(|window| window == marker) {
+    let valid = match mode {
+        Mode::Baseline => preview == b"ok" || preview == b"ok\n",
+        _ => preview.windows(marker.len()).any(|window| window == marker),
+    };
+    if !valid {
         return None;
     }
     Some(t.elapsed())
 }
 
+#[derive(serde::Serialize)]
 struct Stats {
+    requests: u64,
+    elapsed_secs: f64,
     errors: u64,
     rps: f64,
     p50: u128,
@@ -216,6 +223,8 @@ fn run_mode(base: &str, mode: Mode, dur: Duration, conc: usize, id: &Identity) -
         }
     };
     Stats {
+        requests: all.len() as u64,
+        elapsed_secs: elapsed,
         errors,
         rps: all.len() as f64 / elapsed,
         p50: pct(0.50),
@@ -255,6 +264,12 @@ fn main() {
             s.p99,
             s.max
         );
+        if env("PERF_JSON", "0") == "1" {
+            println!(
+                "PERF_JSON {}",
+                serde_json::json!({ "mode": m.name(), "stats": s })
+            );
+        }
     }
     if let Some(b) = baseline_rps {
         eprintln!(

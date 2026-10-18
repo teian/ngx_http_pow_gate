@@ -30,7 +30,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
 use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
 use pow_gate_core::target::solution_valid;
 use rand_core::OsRng;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(serde::Deserialize)]
 struct Challenge {
@@ -62,10 +62,28 @@ fn main() {
     println!("e2e: target {base}");
 
     // 1. excluded path is never gated
-    let health = ureq::get(&format!("{base}/healthz")).call();
-    match health {
-        Ok(r) if r.status() == 200 => println!("✓ /healthz excluded (200)"),
-        other => fail(format!("/healthz expected 200, got {other:?}")),
+    // Compose starts containers concurrently; entrypoint scripts can still be
+    // running when the client starts, especially under ARM emulation. Retry
+    // transport failures only, under one bounded startup deadline.
+    let startup = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(2))
+        .build();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match startup.get(&format!("{base}/healthz")).call() {
+            Ok(response) if response.status() == 200 => {
+                let body = response.into_string().unwrap_or_default();
+                if body.trim() != "ok" {
+                    fail("/healthz did not return the excluded response".to_owned());
+                }
+                println!("✓ /healthz excluded (200)");
+                break;
+            }
+            Err(ureq::Error::Transport(_)) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            other => fail(format!("/healthz expected 200, got {other:?}")),
+        }
     }
 
     // 2. uncleared request gets a challenge, not upstream content

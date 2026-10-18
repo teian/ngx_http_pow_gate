@@ -15,6 +15,8 @@ jobs:
         run: python3 tests/build/test_nginx_versions.py
       - name: core unit tests
         run: cd src/pow-gate-core && cargo test --locked || cargo test
+      - name: accelerated crypto compatibility tests
+        run: cargo test --locked -p pow-gate-core --features native-crypto
       - name: e2e client compiles
         run: cd tests/integration && cargo build --locked || cargo build
 
@@ -47,3 +49,60 @@ jobs:
         run: |
           docker compose -f docker-compose.test.yml up --build \
             --abort-on-container-exit --exit-code-from e2e
+
+  # Real browser recovery + both replay backends on native nginx event loops.
+  resilience:
+    runs-on: ubuntu-latest
+    needs: [core]
+    strategy:
+      fail-fast: false
+      matrix:
+        nginx: [mainline, stable]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - name: select pinned nginx channel
+        run: python3 scripts/nginx-versions.py ${{ matrix.nginx }} >> "$GITHUB_ENV"
+      - name: build native nginx and module
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcre2-dev zlib1g-dev libssl-dev
+          curl -fsSL "https://nginx.org/download/nginx-$NGINX_VERSION.tar.gz" -o "$RUNNER_TEMP/nginx.tar.gz"
+          echo "$NGINX_SHA256  $RUNNER_TEMP/nginx.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/nginx-source"
+          tar xzf "$RUNNER_TEMP/nginx.tar.gz" -C "$RUNNER_TEMP/nginx-source" --strip-components=1
+          cd "$RUNNER_TEMP/nginx-source"
+          ./configure --with-compat --with-http_realip_module --with-http_v2_module --with-http_ssl_module --with-http_v3_module
+          make -j2
+          cd "$GITHUB_WORKSPACE"
+          NGINX_SOURCE_DIR="$RUNNER_TEMP/nginx-source" cargo build --release --locked -p ngx-http-pow-gate
+          echo "POW_NGINX=$RUNNER_TEMP/nginx-source/objs/nginx" >> "$GITHUB_ENV"
+          echo "POW_MODULE=$GITHUB_WORKSPACE/target/release/libngx_http_pow_gate.so" >> "$GITHUB_ENV"
+      - name: start isolated Redis
+        run: |
+          docker run -d --name pow-gate-test-redis -p 127.0.0.1:16379:6379 \
+            redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0 \
+            redis-server --maxmemory 16mb --maxmemory-policy noeviction --save '' --appendonly no
+      - name: native wire, reload, feed and cluster regressions
+        run: |
+          python3 tests/pow-clearance/native-test.py "$POW_NGINX" "$POW_MODULE"
+          python3 tests/pow-clearance/reload-test.py "$POW_NGINX" "$POW_MODULE"
+          python3 tests/pow-clearance/feeds-test.py "$POW_NGINX" "$POW_MODULE"
+          python3 tests/pow-clearance/gzip-test.py "$POW_NGINX" "$POW_MODULE"
+          node tests/pow-clearance/cluster-test.mjs
+          python3 -m venv "$RUNNER_TEMP/http3-venv"
+          "$RUNNER_TEMP/http3-venv/bin/pip" install -r tests/pow-clearance/http3-requirements.txt
+          POW_REDIS=127.0.0.1:16379 "$RUNNER_TEMP/http3-venv/bin/python" tests/pow-clearance/transport-test.py "$POW_NGINX" "$POW_MODULE"
+      - name: install browser test dependencies
+        working-directory: tests/browser
+        run: |
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium firefox
+      - name: Chromium and Firefox recovery regressions
+        run: npm test --prefix tests/browser
+      - name: remove isolated Redis
+        if: always()
+        run: docker rm -f pow-gate-test-redis || true

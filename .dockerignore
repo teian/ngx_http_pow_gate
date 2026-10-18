@@ -4,3 +4,6 @@
 docs
 *.md
 .github
+.nginx
+**/node_modules
+**/__pycache__

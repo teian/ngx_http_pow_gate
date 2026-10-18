@@ -5,7 +5,7 @@
 //!
 //!   * **IP ranges** — fetch the operators' official CIDR JSON feeds
 //!     (`ip_ranges_url`), refreshed on a timer (`ip_ranges_refresh`). Membership
-//!     is an O(ranges) test on a lock-free [`ArcSwap`] snapshot — the hot path
+//!     is an O(log ranges) test on a lock-free [`ArcSwap`] snapshot — the hot path
 //!     never blocks. Parsing lives in [`pow_gate_core::ranges`] (unit-tested).
 //!   * **FCrDNS** — Forward-Confirmed reverse DNS: PTR(ip) ends in an
 //!     `fcrdns_suffix` *and* that host resolves back to the same ip. DNS is done
@@ -24,7 +24,7 @@ use ngx::ffi::{
     ngx_command_t, ngx_conf_parse, ngx_conf_t, ngx_cycle_t, ngx_http_conf_ctx_t, ngx_http_module,
     ngx_pool_cleanup_add, ngx_str_t,
 };
-use pow_gate_core::ranges::IpRangeSet;
+use pow_gate_core::feeds::FeedSnapshot;
 use pow_gate_core::verdict_cache::{Lookup, VerdictCache};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
@@ -40,7 +40,8 @@ use std::time::{Duration, Instant};
 
 /// One configured verifier.
 pub struct Verifier {
-    pub ranges: ArcSwap<IpRangeSet>,
+    pub ranges: ArcSwap<Vec<Option<FeedSnapshot>>>,
+    pub max_stale: Duration,
     pub urls: Vec<String>,
     pub refresh: Duration,
     pub fcrdns_suffixes: Vec<String>,
@@ -54,18 +55,36 @@ fn registry() -> &'static RwLock<HashMap<String, Arc<Verifier>>> {
 
 /// Does verifier `name` confirm `ip`? Hot path: lock-free range check, then a
 /// cached FCrDNS verdict. Never waits for DNS (resolution happens in the background).
-pub fn verifier_allows(name: &str, ip: IpAddr) -> bool {
+pub fn verifier_result(name: &str, ip: IpAddr) -> (bool, &'static str) {
     let v = match registry().read().ok().and_then(|r| r.get(name).cloned()) {
         Some(v) => v,
-        None => return false,
+        None => return (false, "unknown_verifier"),
     };
-    if v.ranges.load().contains(ip) {
-        return true;
+    let now = Instant::now();
+    if v.ranges
+        .load()
+        .iter()
+        .flatten()
+        .any(|feed| feed.contains(ip, now, v.max_stale))
+    {
+        return (true, "verified_range");
     }
-    if !v.fcrdns_suffixes.is_empty() {
-        return fcrdns_cached(&v, ip);
+    if !v.fcrdns_suffixes.is_empty() && fcrdns_cached(&v, ip) {
+        return (true, "verified_dns");
     }
-    false
+    let feeds = v.ranges.load();
+    let stale = feeds
+        .iter()
+        .flatten()
+        .any(|feed| !feed.fresh(now, v.max_stale));
+    (
+        false,
+        if stale {
+            "feed_stale"
+        } else {
+            "verifier_unconfirmed"
+        },
+    )
 }
 
 /// Start the per-worker background refreshers — call once from `init_process`.
@@ -100,25 +119,46 @@ fn spawn_refresher(v: Arc<Verifier>) {
     if v.urls.is_empty() {
         return;
     }
-    std::thread::spawn(move || loop {
-        let mut set = IpRangeSet::new();
-        for url in &v.urls {
-            if let Ok(resp) = ureq::get(url).call() {
-                let mut buf = Vec::new();
-                if resp
-                    .into_reader()
-                    .take(8 << 20)
-                    .read_to_end(&mut buf)
-                    .is_ok()
-                {
-                    set.add_feed_json(&buf);
+    std::thread::spawn(move || {
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(3))
+            .timeout_read(Duration::from_secs(5))
+            .timeout_write(Duration::from_secs(5))
+            .timeout(Duration::from_secs(10))
+            .build();
+        let mut feeds = vec![None; v.urls.len()];
+        loop {
+            for (index, url) in v.urls.iter().enumerate() {
+                let fresh = (|| {
+                    let response = agent.get(url).call().ok()?;
+                    let mut bytes = Vec::new();
+                    response
+                        .into_reader()
+                        .take((8 << 20) + 1)
+                        .read_to_end(&mut bytes)
+                        .ok()?;
+                    if bytes.len() > 8 << 20 {
+                        return None;
+                    }
+                    FeedSnapshot::parse(&bytes, Instant::now())
+                })();
+                if let Some(fresh) = fresh {
+                    feeds[index] = Some(fresh);
+                } else {
+                    eprintln!("[pow_gate] crawler feed refresh failed (source {}, retaining unexpired snapshot)", index);
                 }
+                // Publish after each source; one slow/failing provider cannot
+                // discard another provider's previously verified snapshot.
+                v.ranges.store(Arc::new(feeds.clone()));
             }
+            // +/-10% jitter spreads workers/reloads without security-sensitive RNG.
+            let sample = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos() as u64
+                ^ std::process::id() as u64;
+            std::thread::sleep(v.refresh.mul_f64(0.9 + (sample % 201) as f64 / 1000.0));
         }
-        if !set.is_empty() {
-            v.ranges.store(Arc::new(set));
-        }
-        std::thread::sleep(v.refresh);
     });
 }
 
@@ -205,15 +245,7 @@ fn fcrdns_confirm(ip: IpAddr, suffixes: &[String]) -> bool {
         Some(h) => h,
         None => return false,
     };
-    // Label-boundary suffix match (see pow_gate_core): `evilgooglebot.com` must
-    // NOT satisfy a `googlebot.com` suffix.
-    let suffix_ok = suffixes
-        .iter()
-        .any(|s| pow_gate_core::ranges::host_matches_suffix(&host, s));
-    if !suffix_ok {
-        return false;
-    }
-    forward_dns(&host).iter().any(|a| *a == ip)
+    pow_gate_core::ranges::fcrdns_confirms(&host, suffixes, ip, forward_dns)
 }
 
 unsafe fn ip_to_sockaddr(ip: IpAddr) -> (libc::sockaddr_storage, libc::socklen_t) {
@@ -314,6 +346,7 @@ struct Builder {
     refresh: Duration,
     suffixes: Vec<String>,
     fcrdns_ttl: Duration,
+    max_stale: Duration,
 }
 
 /// `pow_gate_verifier <name> { … }` — parse the block body and register a
@@ -334,6 +367,7 @@ pub extern "C" fn pow_gate_verifier_block(
             refresh: Duration::from_secs(12 * 3600),
             suffixes: Vec::new(),
             fcrdns_ttl: Duration::from_secs(3600),
+            max_stale: Duration::from_secs(48 * 3600),
         }));
 
         // Parse the { } body: nginx calls `verifier_inner` for each inner line.
@@ -374,9 +408,18 @@ extern "C" fn verifier_inner(
                     (*b).urls.push(u);
                 }
             }
+            "ip_ranges_max_stale" => {
+                if let Some(t) = arg(cf, 1).and_then(|s| parse_time(&s)) {
+                    (*b).max_stale = t;
+                } else {
+                    return NGX_CONF_ERROR;
+                }
+            }
             "ip_ranges_refresh" => {
-                if let Some(t) = arg(cf, 1) {
-                    (*b).refresh = parse_time(&t);
+                if let Some(t) = arg(cf, 1).and_then(|s| parse_time(&s)) {
+                    (*b).refresh = t;
+                } else {
+                    return NGX_CONF_ERROR;
                 }
             }
             "fcrdns_suffix" => {
@@ -387,8 +430,10 @@ extern "C" fn verifier_inner(
                 }
             }
             "fcrdns_ttl" => {
-                if let Some(t) = arg(cf, 1) {
-                    (*b).fcrdns_ttl = parse_time(&t);
+                if let Some(t) = arg(cf, 1).and_then(|s| parse_time(&s)) {
+                    (*b).fcrdns_ttl = t;
+                } else {
+                    return NGX_CONF_ERROR;
                 }
             }
             _ => return NGX_CONF_ERROR, // unknown directive inside the block
@@ -398,8 +443,13 @@ extern "C" fn verifier_inner(
 }
 
 unsafe fn register(b: Builder, cf: *mut ngx_conf_t, main: *mut MainConf) -> bool {
+    if b.urls.len() > 32 || b.max_stale < b.refresh {
+        eprintln!("[pow_gate] at most 32 feed URLs; ip_ranges_max_stale must be >= refresh");
+        return false;
+    }
     let v = Arc::new(Verifier {
-        ranges: ArcSwap::from_pointee(IpRangeSet::new()),
+        ranges: ArcSwap::from_pointee(vec![None; b.urls.len()]),
+        max_stale: b.max_stale,
         urls: b.urls,
         refresh: b.refresh,
         fcrdns_suffixes: b.suffixes,
@@ -442,7 +492,7 @@ unsafe fn arg(cf: *mut ngx_conf_t, i: usize) -> Option<String> {
 }
 
 /// Parse `12h` / `30m` / `90s` / `1d` / plain seconds into a `Duration`.
-fn parse_time(s: &str) -> Duration {
+fn parse_time(s: &str) -> Option<Duration> {
     let s = s.trim();
     let (num, mult) = match s.chars().last() {
         Some('s') => (&s[..s.len() - 1], 1u64),
@@ -451,6 +501,10 @@ fn parse_time(s: &str) -> Duration {
         Some('d') => (&s[..s.len() - 1], 86400),
         _ => (s, 1),
     };
-    let n: u64 = num.trim().parse().unwrap_or(0);
-    Duration::from_secs(n * mult)
+    let n: u64 = num.trim().parse().ok()?;
+    let seconds = n.checked_mul(mult)?;
+    if seconds == 0 || seconds > 365 * 86400 {
+        return None;
+    }
+    Some(Duration::from_secs(seconds))
 }

@@ -95,6 +95,8 @@ unsafe fn merge_str(conf: &mut ngx_str_t, prev: &ngx_str_t, default: &'static [u
 
 #[repr(C)]
 pub struct LocationConf {
+    // Cycle-owned, initialized lazily in each worker after inheritance/fork.
+    pub resolved: *mut std::sync::OnceLock<Box<crate::runtime::Cfg>>,
     // ── gate + decision ──
     pub enabled: ngx_flag_t,                     // pow_gate on|off
     pub trusted: *mut ngx_http_complex_value_t,  // pow_gate_trusted   $var   (server, location)
@@ -128,13 +130,15 @@ pub struct LocationConf {
 
     // ── clearance-cookie attributes (pow_gate_cookie_*) ──
     // Empty str / NGX_CONF_UNSET flag ⇒ merge applies the documented default.
-    pub cookie_name: ngx_str_t,     // default: pow_clearance
-    pub cookie_domain: ngx_str_t,   // default: host-only (no Domain=)
-    pub cookie_path: ngx_str_t,     // default: /
-    pub cookie_samesite: ngx_str_t, // Lax|Strict|None, default: Lax
-    pub cookie_secure: ngx_flag_t,  // default: on
-    pub cookie_httponly: ngx_flag_t, // default: on
-                                    // Max-Age tracks pow_gate_clearance_ttl; no separate directive.
+    pub cookie_name: ngx_str_t,           // default: pow_clearance
+    pub cookie_effective_name: ngx_str_t, // derived once after inheritance
+    pub cookie_scope_suffix: ngx_flag_t,  // default: on
+    pub cookie_domain: ngx_str_t,         // default: host-only (no Domain=)
+    pub cookie_path: ngx_str_t,           // default: /
+    pub cookie_samesite: ngx_str_t,       // Lax|Strict|None, default: Lax
+    pub cookie_secure: ngx_flag_t,        // default: on
+    pub cookie_httponly: ngx_flag_t,      // default: on
+                                          // Max-Age tracks pow_gate_clearance_ttl; no separate directive.
 }
 
 // ───────────────────────── main (per-http) configuration ──────────────────────
@@ -144,6 +148,7 @@ pub struct LocationConf {
 #[repr(C)]
 pub struct MainConf {
     pub redemption_zone: *mut ngx_shm_zone_t,
+    pub cluster: *mut c_void,   // optional cycle-owned Redis configuration
     pub verifiers: *mut c_void, // map<name, Verifier> built by pow_gate_verifier {}
 }
 
@@ -155,7 +160,7 @@ const SERVER_LOCATION: ngx_uint_t = (NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF) as n
 // ───────────────────────────── command table ─────────────────────────────────
 
 #[no_mangle]
-pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 24] = [
+pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 26] = [
     // pow_gate on|off;
     ngx_command_t {
         name: ngx_string!("pow_gate"),
@@ -317,6 +322,14 @@ pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 24] = [
     },
     // pow_gate_cookie_domain <domain>;
     ngx_command_t {
+        name: ngx_string!("pow_gate_cookie_scope_suffix"),
+        type_: HTTP_SERVER_LOCATION | NGX_CONF_FLAG as ngx_uint_t,
+        set: Some(ngx_conf_set_flag_slot),
+        conf: NGX_HTTP_LOC_CONF_OFFSET,
+        offset: offset_of!(LocationConf, cookie_scope_suffix),
+        post: ptr::null_mut(),
+    },
+    ngx_command_t {
         name: ngx_string!("pow_gate_cookie_domain"),
         type_: HTTP_SERVER_LOCATION | NGX_CONF_TAKE1 as ngx_uint_t,
         set: Some(ngx_conf_set_str_slot),
@@ -369,6 +382,14 @@ pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 24] = [
         offset: 0,
         post: ptr::null_mut(),
     },
+    ngx_command_t {
+        name: ngx_string!("pow_gate_redis"),
+        type_: (NGX_HTTP_MAIN_CONF | NGX_CONF_BLOCK | NGX_CONF_NOARGS) as ngx_uint_t,
+        set: Some(crate::cluster::configure),
+        conf: NGX_HTTP_MAIN_CONF_OFFSET,
+        offset: 0,
+        post: ptr::null_mut(),
+    },
     // ngx_null_command terminator — nginx scans until it hits a zeroed entry.
     ngx_command_t {
         name: ngx_str_t {
@@ -404,6 +425,13 @@ pub extern "C" fn create_location_conf(cf: *mut ngx_conf_t) -> *mut c_void {
         // pcalloc zeroes; mark numeric/time/flag fields "unset" so merge can tell
         // "set here" from "inherit". (Built-in slot setters also reject a second
         // write only when the field is non-UNSET, so flags MUST start UNSET.)
+        let cleanup = ngx_pool_cleanup_add((*cf).pool, 0);
+        if cleanup.is_null() {
+            return ptr::null_mut();
+        }
+        (*p).resolved = Box::into_raw(Box::new(std::sync::OnceLock::new()));
+        (*cleanup).data = (*p).resolved.cast();
+        (*cleanup).handler = Some(drop_resolved);
         (*p).enabled = NGX_CONF_UNSET as ngx_flag_t;
         (*p).trusted = ptr::null_mut(); // NGX_CONF_UNSET_PTR conceptually
         (*p).decision = ptr::null_mut();
@@ -416,11 +444,18 @@ pub extern "C" fn create_location_conf(cf: *mut ngx_conf_t) -> *mut c_void {
         (*p).replay = NGX_CONF_UNSET as ngx_flag_t;
         (*p).replay_max_body = UNSET_SIZE;
         (*p).cookie_secure = NGX_CONF_UNSET as ngx_flag_t;
+        (*p).cookie_scope_suffix = NGX_CONF_UNSET as ngx_flag_t;
         (*p).cookie_httponly = NGX_CONF_UNSET as ngx_flag_t;
         // str fields (page_path, hmac_key_file, endpoint, cookie_*) stay zeroed;
         // merge substitutes the canonical default string when inherited len == 0.
         p as *mut c_void
     }
+}
+
+unsafe extern "C" fn drop_resolved(data: *mut c_void) {
+    drop(Box::from_raw(
+        data.cast::<std::sync::OnceLock<Box<crate::runtime::Cfg>>>(),
+    ));
 }
 
 pub extern "C" fn merge_location_conf(
@@ -468,6 +503,7 @@ pub extern "C" fn merge_location_conf(
         merge_size(&mut conf.replay_max_body, prev.replay_max_body, 1024 * 1024);
 
         merge_str(&mut conf.cookie_name, &prev.cookie_name, b"pow_clearance");
+        merge_flag(&mut conf.cookie_scope_suffix, prev.cookie_scope_suffix, 1);
         merge_str(&mut conf.cookie_domain, &prev.cookie_domain, b"");
         merge_str(&mut conf.cookie_path, &prev.cookie_path, b"/");
         merge_str(&mut conf.cookie_samesite, &prev.cookie_samesite, b"Lax");
@@ -477,6 +513,47 @@ pub extern "C" fn merge_location_conf(
             prev.cookie_httponly,
             1, /* on */
         );
+
+        let base = crate::response::as_str(&conf.cookie_name);
+        let name = if conf.cookie_scope_suffix != 0 {
+            let domain = crate::response::as_str(&conf.cookie_domain)
+                .trim_start_matches('.')
+                .to_ascii_lowercase();
+            let same_site = crate::response::as_str(&conf.cookie_samesite).to_ascii_lowercase();
+            pow_gate_core::cookie::scoped_name(
+                base,
+                &[
+                    &domain,
+                    crate::response::as_str(&conf.cookie_path),
+                    &same_site,
+                    if conf.cookie_secure != 0 || same_site == "none" {
+                        "secure"
+                    } else {
+                        "http"
+                    },
+                    if conf.cookie_httponly != 0 {
+                        "httponly"
+                    } else {
+                        "readable"
+                    },
+                    crate::response::as_str(&conf.endpoint),
+                    crate::response::as_str(&conf.policy),
+                    &conf.ipv4_prefix.to_string(),
+                    &conf.ipv6_prefix.to_string(),
+                ],
+            )
+        } else {
+            base.to_owned()
+        };
+        let data = ngx_pnalloc((*cf).pool, name.len()).cast::<u8>();
+        if data.is_null() {
+            return NGX_CONF_ERROR;
+        }
+        ptr::copy_nonoverlapping(name.as_ptr(), data, name.len());
+        conf.cookie_effective_name = ngx_str_t {
+            len: name.len(),
+            data,
+        };
 
         // Where the gate is on, the HMAC key is mandatory and must be usable.
         // Validate NOW so a misconfigured gate refuses to start instead of

@@ -96,14 +96,14 @@ extern "C" fn body_ready(r: *mut ngx_http_request_t) {
     let page = unsafe { as_bytes(&lc.page_cache) };
 
     let body = unsafe { runtime::request_body(r) }.unwrap_or_default();
-    let (method, _) = unsafe { runtime::method_and_path(r) };
+    let (method, _) = runtime::method_and_path(req);
     // The RAW client-sent target (still percent-encoded, unlike r->uri), so the
     // replayed request goes exactly where the original one did. Held to
     // `same_site_path` by Captured::new.
     let url = unsafe { as_str(&(*r).unparsed_uri) };
     let content_type = runtime::header(req, "content-type").unwrap_or_default();
 
-    let rendered = match Captured::new(&method, url, &content_type, &body) {
+    let rendered = match Captured::new(method, url, &content_type, &body) {
         Some(c) if body.len() <= cfg.replay_max_body => inject(page, &c.script_tag()),
         _ => page.to_vec(),
     };

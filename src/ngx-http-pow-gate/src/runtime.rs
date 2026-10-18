@@ -1,10 +1,11 @@
 //! Request-time glue between nginx and the engine core: read the merged
-//! `LocationConf`, resolve it to owned values, load the HMAC key (cached), and
+//! `LocationConf`, reuse its worker-local resolved values and HMAC key, and
 //! pull cookies / headers / the request body off the request. The nginx *input*
 //! side of the FFI seam (the output side is `response.rs`).
 
 use ngx::ffi::ngx_http_request_t;
 use ngx::http::Request;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ptr;
@@ -20,9 +21,10 @@ use crate::response::as_str;
 /// forgeable. The docs recommend 32+ random bytes.
 pub const MIN_HMAC_KEY_LEN: usize = 16;
 
-/// Resolved per-request configuration (owned, so it survives across the async
-/// body callback without borrowing nginx memory).
+/// Resolved configuration owned by the location and reused within each worker.
 pub struct Cfg {
+    pub authenticator: pow_gate_core::HmacKey,
+    scope: pow_gate_core::context::Scope,
     pub key: Arc<Vec<u8>>,
     /// `true` iff the HMAC key loaded for this location is usable (present,
     /// readable, and `>= MIN_HMAC_KEY_LEN`). When `false` the gate fails closed:
@@ -31,7 +33,6 @@ pub struct Cfg {
     pub key_ok: bool,
     pub difficulty: u64,
     pub address: pow_gate_core::context::AddressPolicy,
-    pub policy: String,
     pub clearance_ttl: i64,
     pub proof_skew: i64,
     /// Require a valid per-request proof on non-navigation requests (cookie alone
@@ -81,13 +82,28 @@ pub unsafe fn location_conf<'a>(r: *mut ngx_http_request_t) -> Option<&'a Locati
     }
 }
 
-/// Resolve a `LocationConf` into owned [`Cfg`]. Loads (and caches) the HMAC key.
-pub fn resolve(lc: &LocationConf) -> Cfg {
+/// Lazily resolve once per location/worker. The config pool owns the cache;
+/// request and async body callbacks cannot outlive their nginx config cycle.
+pub fn resolve(lc: &LocationConf) -> &Cfg {
+    unsafe { &*lc.resolved }.get_or_init(|| Box::new(build_cfg(lc)))
+}
+
+fn build_cfg(lc: &LocationConf) -> Cfg {
     unsafe {
         let key_path = as_str(&lc.hmac_key_file);
         let key = load_key(key_path);
         let key_ok = key.len() >= MIN_HMAC_KEY_LEN;
+        let domain = as_str(&lc.cookie_domain);
+        let scope = pow_gate_core::context::Scope::new(
+            (!domain.is_empty()).then_some(domain),
+            &nonempty(as_str(&lc.cookie_effective_name), "pow_clearance"),
+            &nonempty(as_str(&lc.cookie_path), "/"),
+            as_str(&lc.endpoint),
+            as_str(&lc.policy),
+        );
         Cfg {
+            authenticator: pow_gate_core::HmacKey::new(&key),
+            scope,
             key,
             key_ok,
             difficulty: lc.difficulty as u64,
@@ -95,7 +111,6 @@ pub fn resolve(lc: &LocationConf) -> Cfg {
                 ipv4_prefix: lc.ipv4_prefix as u8,
                 ipv6_prefix: lc.ipv6_prefix as u8,
             },
-            policy: as_str(&lc.policy).to_owned(),
             clearance_ttl: lc.clearance_ttl as i64,
             proof_skew: lc.proof_skew as i64,
             require_proof: lc.require_proof != 0,
@@ -103,7 +118,7 @@ pub fn resolve(lc: &LocationConf) -> Cfg {
             replay_max_body: lc.replay_max_body,
             endpoint: as_str(&lc.endpoint).to_string(),
             cookie: CookieConfig {
-                name: nonempty(as_str(&lc.cookie_name), "pow_clearance"),
+                name: nonempty(as_str(&lc.cookie_effective_name), "pow_clearance"),
                 domain: {
                     let d = as_str(&lc.cookie_domain);
                     if d.is_empty() {
@@ -166,16 +181,21 @@ fn load_key(path: &str) -> Arc<Vec<u8>> {
 // ───────────────────────────── header / body reads ───────────────────────────
 
 /// Value of the cookie named `name` from the request's `Cookie` header(s).
-pub fn cookie(r: &Request, name: &str) -> Option<String> {
+pub fn cookie<'a>(r: &'a Request, name: &str) -> Option<Cow<'a, str>> {
     for (k, v) in r.headers_in_iterator() {
         if k.as_bytes().eq_ignore_ascii_case(b"cookie") {
-            let val = String::from_utf8_lossy(v.as_bytes());
-            for pair in val.split(';') {
-                let pair = pair.trim();
-                if let Some((cn, cv)) = pair.split_once('=') {
-                    if cn == name {
-                        return Some(cv.to_string());
+            match String::from_utf8_lossy(v.as_bytes()) {
+                Cow::Borrowed(value) => {
+                    if let Some(value) = cookie_value(value, name) {
+                        return Some(Cow::Borrowed(value));
                     }
+                    continue;
+                }
+                Cow::Owned(value) => {
+                    if let Some(value) = cookie_value(&value, name) {
+                        return Some(Cow::Owned(value.to_owned()));
+                    }
+                    continue;
                 }
             }
         }
@@ -183,11 +203,19 @@ pub fn cookie(r: &Request, name: &str) -> Option<String> {
     None
 }
 
+fn cookie_value<'a>(value: &'a str, name: &str) -> Option<&'a str> {
+    value
+        .split(';')
+        .filter_map(|pair| pair.trim().split_once('='))
+        .find(|(key, _)| *key == name)
+        .map(|(_, value)| value)
+}
+
 /// Value of a request header (case-insensitive name).
-pub fn header(r: &Request, name: &str) -> Option<String> {
+pub fn header<'a>(r: &'a Request, name: &str) -> Option<Cow<'a, str>> {
     for (k, v) in r.headers_in_iterator() {
         if k.as_bytes().eq_ignore_ascii_case(name.as_bytes()) {
-            return Some(String::from_utf8_lossy(v.as_bytes()).into_owned());
+            return Some(String::from_utf8_lossy(v.as_bytes()));
         }
     }
     None
@@ -248,13 +276,9 @@ const libc_af_inet: i32 = 2;
 const libc_af_inet6: i32 = 10;
 
 /// The request method (e.g. `"GET"`) and path (URI), for the proof message.
-///
-/// # Safety
-/// `r` must be live.
-pub unsafe fn method_and_path(r: *mut ngx_http_request_t) -> (String, String) {
-    let method = as_str(&(*r).method_name).to_string();
-    let path = as_str(&(*r).uri).to_string();
-    (method, path)
+pub fn method_and_path(r: &Request) -> (&str, &str) {
+    let raw = r as *const Request as *const ngx_http_request_t;
+    unsafe { (as_str(&(*raw).method_name), as_str(&(*raw).uri)) }
 }
 
 /// The declared request-body length, or `None` when there is none or nginx does
@@ -373,26 +397,11 @@ pub fn client_context(r: &Request, cfg: &Cfg) -> Option<String> {
     let issuer = crate::redemption::issuer()?;
     let ip = client_ip(r)?;
     let raw = r as *const Request as *mut ngx_http_request_t;
-    let scope_host = cfg
-        .cookie
-        .domain
-        .clone()
-        .unwrap_or_else(|| unsafe { as_str(&(*raw).headers_in.server).to_owned() })
-        .trim_start_matches('.')
-        .to_ascii_lowercase();
-    if scope_host.is_empty() {
-        return None;
-    }
-    let scope = serde_json::to_string(&(
-        scope_host,
-        &cfg.cookie.name,
-        &cfg.cookie.path,
-        &cfg.endpoint,
-        &cfg.policy,
-    ))
-    .ok()?;
-    pow_gate_core::context::binding(
-        &cfg.key,
+    let scope = cfg
+        .scope
+        .for_host(unsafe { as_str(&(*raw).headers_in.server) })?;
+    pow_gate_core::context::binding_prepared(
+        &cfg.authenticator,
         ip,
         &header(r, "user-agent").unwrap_or_default(),
         &scope,

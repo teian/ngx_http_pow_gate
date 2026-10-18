@@ -9,7 +9,40 @@
 //! Signature encoding is the fixed 64-byte `r ‖ s` produced by WebCrypto's
 //! `ECDSA` with `SHA-256` — which is exactly what `p256` verifies.
 
-use p256::ecdsa::{signature::Verifier, Signature, VerifyingKey};
+use p256::ecdsa::VerifyingKey;
+#[cfg(not(feature = "native-crypto"))]
+use p256::ecdsa::{signature::Verifier, Signature};
+
+fn verify_signature(pk: &[u8], message: &[u8], sig: &[u8]) -> bool {
+    #[cfg(feature = "native-crypto")]
+    {
+        // Preserve the portable API's support for compressed SEC1 keys. The
+        // nginx wire protocol requires the uncompressed encoding, its fast path.
+        let encoded;
+        let pk = if pk.len() == 33 {
+            let Ok(key) = VerifyingKey::from_sec1_bytes(pk) else {
+                return false;
+            };
+            encoded = key.to_encoded_point(false);
+            encoded.as_bytes()
+        } else {
+            pk
+        };
+        ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_FIXED, pk)
+            .verify(message, sig)
+            .is_ok()
+    }
+    #[cfg(not(feature = "native-crypto"))]
+    {
+        let Ok(vk) = VerifyingKey::from_sec1_bytes(pk) else {
+            return false;
+        };
+        let Ok(sig) = Signature::from_slice(sig) else {
+            return false;
+        };
+        vk.verify(message, &sig).is_ok()
+    }
+}
 
 /// The signed message for `(method, path, ts)`.
 pub fn message(method: &str, path: &str, ts: i64) -> String {
@@ -33,14 +66,7 @@ pub fn verify(
     if skew < 0 || now.abs_diff(ts) > skew as u64 {
         return false;
     }
-    let Ok(vk) = VerifyingKey::from_sec1_bytes(pk_sec1) else {
-        return false;
-    };
-    let Ok(signature) = Signature::from_slice(sig) else {
-        return false;
-    };
-    vk.verify(message(method, path, ts).as_bytes(), &signature)
-        .is_ok()
+    verify_signature(pk_sec1, message(method, path, ts).as_bytes(), sig)
 }
 
 /// Canonical WebCrypto SEC1 encoding; rejects malformed and alternate encodings.
@@ -54,11 +80,5 @@ pub fn challenge_message(token: &str) -> String {
 }
 
 pub fn verify_challenge(pk: &[u8], token: &str, sig: &[u8]) -> bool {
-    let Ok(vk) = VerifyingKey::from_sec1_bytes(pk) else {
-        return false;
-    };
-    let Ok(sig) = Signature::from_slice(sig) else {
-        return false;
-    };
-    vk.verify(challenge_message(token).as_bytes(), &sig).is_ok()
+    verify_signature(pk, challenge_message(token).as_bytes(), sig)
 }

@@ -15,7 +15,7 @@
 use ngx::core::Status;
 use ngx::ffi::ngx_str_t;
 use ngx::http::{HTTPStatus, Request};
-use pow_gate_core::{clearance, context::Assurance, nojs, redemption::Outcome};
+use pow_gate_core::{clearance, context::Assurance, nojs};
 
 use crate::challenge::serve_nojs_page;
 use crate::response::{as_str, send_and_finish_with_headers};
@@ -32,6 +32,7 @@ pub fn pass(r: &mut Request, cfg: &Cfg, nojs_template: &ngx_str_t, required: Ass
             &[],
         );
     }
+    crate::observability::record(r, "rejected", "invalid_grant", 0);
     let now = runtime::now();
     let Assurance::NoJs { delay } = required else {
         return HTTPStatus::BAD_REQUEST.into();
@@ -46,30 +47,16 @@ pub fn pass(r: &mut Request, cfg: &Cfg, nojs_template: &ngx_str_t, required: Ass
             if grant.delay != delay {
                 return HTTPStatus::BAD_REQUEST.into();
             }
-            match crate::redemption::consume(&token, grant.iat + nojs::NOJS_GRACE) {
-                Outcome::Accepted => {}
-                Outcome::Reused => return HTTPStatus::CONFLICT.into(),
-                Outcome::Expired => return HTTPStatus::BAD_REQUEST.into(),
-                _ => return HTTPStatus::SERVICE_UNAVAILABLE.into(),
-            }
+            let expires = grant.iat + nojs::NOJS_GRACE;
             let clearance =
                 clearance::issue(&cfg.key, &[], &context, required, now, cfg.clearance_ttl);
-            let set_cookie = runtime::build_set_cookie(&clearance, &cfg.cookie);
-            // Tiny body doubles as the fallback for agents that don't follow
-            // redirects, and guarantees the response is flushed (see the
-            // contract note in response::send_with_headers).
-            let body = redirect_body(&grant.path);
-            send_and_finish_with_headers(
-                r,
-                HTTPStatus::MOVED_TEMPORARILY,
-                "text/html; charset=utf-8",
-                body.as_bytes(),
-                &[
-                    ("Location", grant.path.as_str()),
-                    ("Set-Cookie", set_cookie.as_str()),
-                    ("Cache-Control", "no-store"),
-                ],
-            )
+            let grant = crate::redemption::Grant {
+                cookie: runtime::build_set_cookie(&clearance, &cfg.cookie),
+                redirect: Some(grant.path),
+                difficulty: 0,
+                kind: "nojs",
+            };
+            crate::redemption::redeem(r, &token, expires, grant)
         }
         nojs::Verdict::TooEarly(grant) => {
             // Fresh grant, wait starts over — the delay cannot be skipped by

@@ -7,23 +7,22 @@ pub const VERIFY_LIMIT: usize = 8192;
 static mut NEXT: ngx_http_request_body_filter_pt = None;
 
 unsafe fn counter(r: *mut ngx_http_request_t) -> *mut usize {
-    if (*r).ctx.is_null() {
-        return std::ptr::null_mut();
+    let state = crate::observability::state(r, false);
+    if state.is_null() || !(*state).verify_enabled {
+        std::ptr::null_mut()
+    } else {
+        &mut (*state).verify_bytes
     }
-    *(*r)
-        .ctx
-        .add(crate::ngx_http_pow_gate_module.ctx_index as usize) as *mut usize
 }
 
 /// Called only for the module-owned verify endpoint, before reading its body.
 pub unsafe fn enable(r: *mut ngx_http_request_t) -> bool {
-    let count = ngx_pcalloc((*r).pool, std::mem::size_of::<usize>()).cast::<usize>();
-    if count.is_null() || (*r).ctx.is_null() {
+    let state = crate::observability::state(r, true);
+    if state.is_null() {
         return false;
     }
-    *(*r)
-        .ctx
-        .add(crate::ngx_http_pow_gate_module.ctx_index as usize) = count.cast();
+    (*state).verify_bytes = 0;
+    (*state).verify_enabled = true;
     true
 }
 
@@ -49,6 +48,8 @@ unsafe extern "C" fn filter(r: *mut ngx_http_request_t, input: *mut ngx_chain_t)
                     0
                 };
                 if size > VERIFY_LIMIT.saturating_sub(*count) {
+                    let req = ngx::http::Request::from_ngx_http_request(r);
+                    crate::observability::record(req, "rejected", "body_too_large", 0);
                     return NGX_HTTP_REQUEST_ENTITY_TOO_LARGE as ngx_int_t;
                 }
                 *count += size;

@@ -325,3 +325,43 @@ the gate** (`pow_gate off;`) or they'll be challenged too.
 | Edited the file, didn't reload nginx                 | Old page still served (cached). `nginx -s reload`.             |
 | External CSS/JS/font on a gated path                 | Those sub-requests get challenged too. Exclude or inline them. |
 | No `<noscript>`                                      | Non-JS clients see a silent dead end. Add a message.           |
+
+
+## Recovery and caching (0.5.0)
+
+Every module-generated challenge, completion and error response sends
+`Cache-Control: no-store`. Exclude the internal endpoint and gate-generated pages
+from CDN/proxy cache rules, including rules that override origin cache headers.
+Do not cache an HTML challenge under a public content URL.
+
+The solver bounds network requests to ten seconds and retries transient GET
+failures with jitter and bounded `Retry-After` handling. Expired challenges and
+ambiguous POST verification replies cause a fresh challenge, never reuse of a
+possibly spent token. Worker startup/stalls have a five-second watchdog and
+fallback to the yielding in-page solver. Leaving the page cancels active workers.
+The embedded page also retries failed solver script loads, at most three times.
+Custom pages may adopt the embedded bootstrap; ordinary `defer` script tags
+alone cannot recover an initial script-load failure.
+
+An optional `#pow-error-detail` element shows the final failure using textContent.
+The solver confirms server-side cookie acceptance before replaying a captured
+request or reloading; blocked cookies produce a bounded error. Custom CSP must
+allow the chosen page's inline scripts/styles (or their hashes/nonces),
+`script-src 'self'`, `connect-src 'self'`, and `worker-src 'self'` for parallel work.
+`worker-src 'none'` falls back to the in-page solver. IndexedDB failure uses an
+ephemeral key for that challenge; integrations requiring later request proofs
+still need persistent key storage. See the browser regressions in
+[testing.md](testing.md).
+
+The rendered solver URL includes the package version and a SHA-256 fingerprint
+of its contents. Only that exact URL has `Cache-Control: public,
+max-age=31536000, immutable`, allowing the page and its workers to share the
+static script. Unversioned, obsolete or modified queries return the current
+script with `no-store`. Challenges, verification/status/pass responses and
+challenge pages remain `no-store`; the cached script contains no client state.
+
+For smaller first-load transfers, [solver-gzip.conf](../examples/solver-gzip.conf)
+enables nginx gzip just for the public solver. Native MIME/charset metadata is
+set on generated responses, so configured nginx body filters work normally.
+Compression is optional and controlled by nginx; cache keys must retain the
+complete solver version query and honor `Vary: Accept-Encoding`.

@@ -5,13 +5,13 @@
 // backend marker. Mirrors assets/solver.js; used by `./scripts/dev.sh check`.
 //
 // Usage: node tests/pow-clearance/solve-test.mjs [base-url]   (default http://localhost:12222)
-// Env:   POW_COOKIE_NAME  clearance cookie name (default pow_clearance,
+// Env:   POW_COOKIE_NAME  exact clearance cookie name (otherwise accepts scoped names,
 //                         keep in sync with pow_gate_cookie_name)
 //        POW_MARKER       string expected in the backend body
 //                         (default "upstream-content", see docker/www/index.html)
 
 const BASE = process.argv[2] ?? "http://localhost:12222";
-const COOKIE_NAME = process.env.POW_COOKIE_NAME ?? "pow_clearance";
+const COOKIE_NAME = process.env.POW_COOKIE_NAME;
 const MARKER = process.env.POW_MARKER ?? "upstream-content";
 const die = (msg) => { console.error(`FAIL  ${msg}`); process.exit(1); };
 
@@ -61,8 +61,11 @@ const res = await fetch(`${BASE}/.pow/verify`, {
 if (!res.ok) die(`verify rejected: HTTP ${res.status}`);
 // Anchored so a prefixed cookie name can't slip through as a partial match.
 const setCookie = res.headers.get("set-cookie") ?? "";
-const clearance = setCookie.match(new RegExp(`(?:^|[\\s,])(${COOKIE_NAME}=[^;]+)`))?.[1];
-if (!clearance) die(`no ${COOKIE_NAME} cookie in verify response (got: ${setCookie || "none"})`);
+const clearance = setCookie.split(";")[0];
+const name = clearance.split("=")[0];
+if (COOKIE_NAME ? name !== COOKIE_NAME : !/^pow_clearance(?:_[0-9a-f]{24})?$/.test(name))
+  die(`unexpected clearance cookie (got: ${name || "none"})`);
+
 console.log("ok    verify accepted, clearance cookie set");
 
 // 4. navigation with clearance → must reach the backend.

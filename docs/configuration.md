@@ -206,10 +206,10 @@ location /search/ {
 }
 ```
 
-The 2 MiB replay table is shared by all workers and survives graceful reloads.
-A full restart invalidates cookies/challenges; saturation returns 503. See
-[security.md](security.md) for memory bounds, limitations and the proposed Redis
-backend. No Redis directive exists in this release.
+The default 2 MiB replay table is shared by all workers and survives graceful
+reloads. Its full restart invalidates cookies/challenges; saturation returns 503.
+The optional [Redis backend](redis.md) supports multiple instances and survives
+process restarts. See [security.md](security.md) for limits and guarantees.
 
 ### `pow_gate_difficulty N;`
 
@@ -705,3 +705,78 @@ upstream capacity controls. Leave the site-specific upload limits where needed.
 - **Different `pow_gate_hmac_key_file` / `pow_gate_endpoint` / `pow_gate_policy` on the issuing vs.
   gated location** → clearances won't validate. Set them at `http` and let them
   inherit unless you deliberately want per-vhost isolation.
+
+
+## Scoped cookie names and migration (0.5.0)
+
+`pow_gate_cookie_scope_suffix on|off` inherits at `http`, `server`, and `location`
+and defaults to **on**. The effective cookie name is the configured base name
+(default `pow_clearance`) plus `_` and 24 hexadecimal characters derived from its
+scope. Domain, path, SameSite, effective Secure/HttpOnly flags, endpoint, policy
+and address prefixes define the scope. TTL/difficulty changes do not rename the
+cookie; authenticated lifetime/assurance checks still enforce them.
+
+Upgrading from fixed names requires one fresh solve. Legacy unsuffixed cookies
+are not accepted or deleted at unknown paths/domains. They expire naturally and
+cannot shadow the newly named cookie. Update any CDN bypass rules, dashboards
+or integrations that assumed an exact fixed name. To retain an exact custom
+name, explicitly set `pow_gate_cookie_scope_suffix off`; when changing scope in
+that mode, also change the base cookie name to avoid old-cookie collisions.
+
+The browser probes `GET {endpoint}status` after verification before navigating.
+A valid clearance returns 204; missing/invalid clearance returns 409. This probe
+uses the same policy/assurance/proof checks as content. Ensure the endpoint lies
+inside the cookie path and receives the same policy as the protected content.
+Blocked cookies stop after three attempts with a visible error, without reloads.
+
+## Crawler feed freshness
+
+Inside `pow_gate_verifier`, `ip_ranges_max_stale <time>` defaults to **48h** and
+must be at least `ip_ranges_refresh`. Each URL retains its own last-known-good
+snapshot. Failed, malformed, oversized or empty replacements retain that source
+only until its freshness deadline. Other healthy sources keep refreshing.
+The expiry check runs on every lookup even if refresh is delayed. Successful
+refresh intervals have ±10% jitter; each fetch has a 10-second total deadline.
+There are at most 32 sources per verifier, an 8 MiB response limit per source,
+and 100,000 entries per feed. Malformed CIDRs reject the whole replacement.
+Refresh/FCrDNS times must be positive and at most 365 days. The initial snapshot
+is empty, so unknown bots are challenged until a feed or DNS result confirms them.
+
+## Outcome logging
+
+Use nginx variables in `log_format` to inspect gate outcomes without sending
+untrusted client headers upstream:
+
+```nginx
+log_format pow '$remote_addr "$request" $status '
+               'pow=$pow_gate_result reason=$pow_gate_reason difficulty=$pow_gate_difficulty';
+access_log /var/log/nginx/pow.log pow;
+```
+
+`$pow_gate_result` is `off`, `bypass`, `deny`, `challenge`, `issued`, `accepted`,
+`rejected`, `error`, or `asset`. `$pow_gate_reason` supplies a bounded reason such
+as `trusted`, `allow`, `verified_range`, `verified_dns`, `verifier_unconfirmed`,
+`feed_stale`, `clearance`, `policy`, `pow`, `nojs`, `invalid_key`,
+`invalid_submission`, `body_too_large`, `replay`, `expired`, `issuer_unavailable`,
+or `redemption_unavailable`. `$pow_gate_cookie_name` exposes the effective scoped cookie name, including when
+the gate is off in a helper location. `$pow_gate_difficulty` is the effective hash budget,
+or 0 when not applicable. Variables are evaluated from request-local state and
+are diagnostic output, not policy inputs. Successful issuance/acceptance also
+logs at nginx INFO level when enabled. No token, cookie, key or Redis credential
+is included in these events. Feed-refresh failures log the source index to stderr.
+
+## Optional ASN policy
+
+[examples/asn-policy.conf](../examples/asn-policy.conf) uses the optional
+[ngx_http_geoip2_module](https://github.com/leev/ngx_http_geoip2_module) and a local
+ASN database to feed native `map` decisions. It introduces no GeoIP dependency in
+the gate. Replace documentation ASNs with observed network policy and update the
+MaxMind database separately via atomic replacement. Give content and challenge
+endpoints identical decisions; URI-only difficulty rules need corresponding
+endpoint locations. Keep regular request limits after clearance.
+
+## Redis backend
+
+`pow_gate_redis { ... }` is optional, `http`-only and instance-wide. With no block,
+the existing shared-memory backend remains in use. See [redis.md](redis.md) for
+required settings, epoch initialization, AUTH, bounds and failover fencing.

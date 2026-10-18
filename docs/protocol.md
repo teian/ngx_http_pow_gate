@@ -180,5 +180,27 @@ Both JS and no-JS redemption use this ledger. No per-client heap table grows in
 workers. Graceful reloads preserve the zone, issuer identity, spent challenges
 and cookies. Full restarts generate a fresh issuer, invalidating old tokens.
 Independent nginx instances have different issuers and reject each other's
-tokens even with the same HMAC key. See [security.md](security.md) for the proposed
-Redis coordination mechanism for clusters; Redis is not implemented yet.
+tokens even with the same HMAC key. The optional [Redis backend](redis.md) uses
+an explicitly provisioned namespace/epoch and an authoritative consume-once ledger
+to coordinate separate nginx instances. It does not allocate the local zone.
+
+
+## Browser clearance confirmation
+
+`GET {endpoint}status` returns 204 when the currently sent clearance and optional
+request proof satisfy the endpoint's policy, or 409 otherwise. It never consumes
+a challenge or mints a cookie. The solver signs this request when confirming a
+PoW clearance. All protocol responses, including rejections,
+carry `Cache-Control: no-store`.
+
+Protocol v2 token formats are unchanged in 0.5.0. Scoped cookie names require one
+fresh solve on upgrade. With Redis enabled, the namespace/epoch identify the
+issuer across nginx instances; switching backend or epoch invalidates existing
+credentials. [Redis coordination](redis.md) defines distributed redemption.
+
+The rendered solver URL includes the package version and a SHA-256 fingerprint
+of its contents. Only that exact URL has `Cache-Control: public,
+max-age=31536000, immutable`, allowing the page and its workers to share the
+static script. Unversioned, obsolete or modified queries return the current
+script with `no-store`. Challenges, verification/status/pass responses and
+challenge pages remain `no-store`; the cached script contains no client state.

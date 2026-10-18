@@ -1,7 +1,6 @@
 //! Clearance validation — read the cookie + optional per-request proof off the
 //! request and verify them with [`pow_gate_core`].
 
-use ngx::ffi::ngx_http_request_t;
 use ngx::http::Request;
 use pow_gate_core::{clearance, codec, proof};
 
@@ -37,33 +36,42 @@ pub fn has_valid_clearance(
         Some(c) => c,
         None => return false,
     };
+    if token.len() > 4096 {
+        return false;
+    }
     let Some(context) = runtime::client_context(r, cfg) else {
         return false;
     };
-    let cleared =
-        match clearance::verify(&cfg.key, &token, &context, required, now, cfg.clearance_ttl) {
-            Some(c) => c,
-            None => return false,
-        };
-
-    match runtime::header(r, "x-pow-proof") {
-        Some(proof_header) => {
-            let pk = match cleared.pk_bytes() {
-                Some(pk) => pk,
-                None => return false,
-            };
-            let (sig, ts) = match parse_proof(&proof_header) {
-                Some(x) => x,
-                None => return false,
-            };
-            let raw = r as *const Request as *mut ngx_http_request_t;
-            let (method, path) = unsafe { runtime::method_and_path(raw) };
-            proof::verify(&pk, &method, &path, ts, &sig, now, cfg.proof_skew)
-        }
-        // No proof header. Accept on the cookie alone unless this request could
-        // have carried one (fetch/XHR) and the requirement is on.
-        None => !cfg.require_proof || !can_carry_proof(r),
-    }
+    clearance::with_verified_prepared(
+        &cfg.authenticator,
+        &token,
+        &context,
+        required,
+        now,
+        cfg.clearance_ttl,
+        |cleared| match runtime::header(r, "x-pow-proof") {
+            Some(proof_header) => {
+                let (sig, ts) = match parse_proof(&proof_header) {
+                    Some(x) => x,
+                    None => return false,
+                };
+                let (method, path) = runtime::method_and_path(r);
+                proof::verify(
+                    cleared.public_key(),
+                    method,
+                    path,
+                    ts,
+                    &sig,
+                    now,
+                    cfg.proof_skew,
+                )
+            }
+            // No proof header. Accept on the cookie alone unless this request could
+            // have carried one (fetch/XHR) and the requirement is on.
+            None => !cfg.require_proof || !can_carry_proof(r),
+        },
+    )
+    .unwrap_or(false)
 }
 
 /// Could this request have attached the `X-Pow-Proof` header?
@@ -86,9 +94,9 @@ fn can_carry_proof(r: &Request) -> bool {
 }
 
 /// Parse `X-Pow-Proof: <base64url-sig>.<unix-ts>`.
-fn parse_proof(h: &str) -> Option<(Vec<u8>, i64)> {
+fn parse_proof(h: &str) -> Option<([u8; 64], i64)> {
     let (sig_b64, ts) = h.rsplit_once('.')?;
-    let sig = codec::unb64url(sig_b64)?;
+    let sig = codec::unb64url_fixed(sig_b64)?;
     let ts: i64 = ts.parse().ok()?;
     Some((sig, ts))
 }

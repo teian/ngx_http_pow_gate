@@ -1,6 +1,6 @@
 [package]
 name = "pow-gate-core"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Pure-Rust proof-of-work gate engine: PoW, clearance tokens, per-request proofs"
@@ -13,7 +13,13 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
+[features]
+# nginx already includes ring through its HTTPS feed client. Keep the default
+# engine pure Rust, and opt into its native HMAC/P-256 routines there.
+native-crypto = ["dep:ring"]
+
 [dependencies]
+ring = { version = "0.17.14", optional = true }
 base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
@@ -27,6 +33,7 @@ p256 = { version = "0.13", features = ["ecdsa"] }
 # exercises the public API only (see ../docs/testing.md). They may need the same
 # crypto crates to construct inputs (e.g. sign a proof), so they are repeated here.
 [dev-dependencies]
+libc = "0.2"             # optional Linux thread-CPU benchmark clock
 p256 = { version = "0.13", features = ["ecdsa"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 serde_json = "1"

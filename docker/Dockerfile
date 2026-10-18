@@ -48,6 +48,8 @@ RUN cd src/pow-gate-core && cargo test --locked || cargo test
 
 # ──────────────────────── 2a. build the module (Debian) ──────────────────────
 FROM ${REGISTRY}/rust:${RUST_VERSION}-trixie@${RUST_TRIXIE_DIGEST} AS module-build-debian
+ARG TARGETARCH
+ARG CARGO_BUILD_JOBS
 ARG NGINX_VERSION
 ARG NGINX_SHA256
 # clang/libclang are pinned to a major version: nginx-sys runs bindgen, whose
@@ -62,21 +64,28 @@ ENV SOURCE_DATE_EPOCH=1700000000 \
     CARGO_INCREMENTAL=0 \
     LC_ALL=C \
     TZ=UTC \
-    RUSTFLAGS="--remap-path-prefix=/usr/local/cargo=/cargo --remap-path-prefix=/src=/build -C codegen-units=1"
+    RUSTFLAGS="--remap-path-prefix=/var/cache/cargo=/cargo --remap-path-prefix=/src=/build -C codegen-units=1"
 WORKDIR /src
-COPY . .
 # Fetch + verify + CONFIGURE the matching nginx (nginx-sys needs the objs/ a
 # `./configure` produces). --with-compat gives a stable module ABI so the runtime
-# nginx package accepts the .so. Builds use the committed Cargo.lock (not
-# `--locked`: that couples the build to one cargo version's resolver — cargo
-# still honours the lock and only updates it if Cargo.toml requires it).
+# nginx package accepts the .so. The configured source is cached separately
+# from module source changes; compilation uses the committed Cargo.lock.
 RUN set -eux; \
     curl -fsSL "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" -o /tmp/nginx.tar.gz; \
     echo "${NGINX_SHA256}  /tmp/nginx.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/nginx.tar.gz -C /tmp; \
-    cd "/tmp/nginx-${NGINX_VERSION}" && ./configure --with-compat && cd /src; \
-    export NGINX_SOURCE_DIR="/tmp/nginx-${NGINX_VERSION}"; \
-    cargo build --release -p ngx-http-pow-gate; \
+    cd "/tmp/nginx-${NGINX_VERSION}"; \
+    ./configure --with-compat
+COPY . .
+# Reuse Cargo's complete cache/lock and target artifacts across source changes.
+# Keep architectures and libc variants apart; nginx-sys tracks its source env.
+# Touch crate roots so copied source timestamps cannot hide a changed module.
+# The exported .so lives outside the cache mount and remains in the image.
+RUN --mount=type=cache,id=pow-cargo-debian-${TARGETARCH},target=/var/cache/cargo,sharing=locked \
+    --mount=type=cache,id=pow-target-debian-${TARGETARCH},target=/src/target,sharing=locked \
+    touch src/pow-gate-core/src/lib.rs src/ngx-http-pow-gate/src/lib.rs && \
+    CARGO_HOME=/var/cache/cargo NGINX_SOURCE_DIR="/tmp/nginx-${NGINX_VERSION}" \
+    cargo build --release --locked -p ngx-http-pow-gate && \
     cp target/release/libngx_http_pow_gate.so /ngx_http_pow_gate_module.so
 
 # Failed reloads must not change the verifier policy inherited by respawned
@@ -85,12 +94,14 @@ FROM module-build-debian AS security-reload
 ARG NGINX_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends python3 procps util-linux \
     && rm -rf /var/lib/apt/lists/*
-RUN make -C "/tmp/nginx-${NGINX_VERSION}" -j2
+RUN make -C "/tmp/nginx-${NGINX_VERSION}" -j"${CARGO_BUILD_JOBS:-2}"
 RUN runuser -u nobody -- python3 /src/tests/pow-clearance/reload-test.py \
       /tmp/nginx-${NGINX_VERSION}/objs/nginx /ngx_http_pow_gate_module.so
 
 # ──────────────────────── 2b. build the module (Alpine) ──────────────────────
 FROM ${REGISTRY}/rust:${RUST_VERSION}-alpine@${RUST_ALPINE_DIGEST} AS module-build-alpine
+ARG TARGETARCH
+ARG CARGO_BUILD_JOBS
 ARG NGINX_VERSION
 ARG NGINX_SHA256
 # musl toolchain: build-base (gcc/make/musl headers) + the -dev libs nginx's
@@ -109,18 +120,26 @@ ENV SOURCE_DATE_EPOCH=1700000000 \
     CARGO_INCREMENTAL=0 \
     LC_ALL=C \
     TZ=UTC \
-    RUSTFLAGS="--remap-path-prefix=/usr/local/cargo=/cargo --remap-path-prefix=/src=/build -C codegen-units=1 -C target-feature=-crt-static"
+    RUSTFLAGS="--remap-path-prefix=/var/cache/cargo=/cargo --remap-path-prefix=/src=/build -C codegen-units=1 -C target-feature=-crt-static"
 WORKDIR /src
-COPY . .
 # Same recipe as Debian; the default host target here is x86_64-unknown-linux-musl,
 # so the cdylib links musl and loads into nginx:alpine.
 RUN set -eux; \
     curl -fsSL "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" -o /tmp/nginx.tar.gz; \
     echo "${NGINX_SHA256}  /tmp/nginx.tar.gz" | sha256sum -c -; \
     tar -xzf /tmp/nginx.tar.gz -C /tmp; \
-    cd "/tmp/nginx-${NGINX_VERSION}" && ./configure --with-compat && cd /src; \
-    export NGINX_SOURCE_DIR="/tmp/nginx-${NGINX_VERSION}"; \
-    cargo build --release -p ngx-http-pow-gate; \
+    cd "/tmp/nginx-${NGINX_VERSION}"; \
+    ./configure --with-compat
+COPY . .
+# Reuse Cargo's complete cache/lock and target artifacts across source changes.
+# Keep architectures and libc variants apart; nginx-sys tracks its source env.
+# Touch crate roots so copied source timestamps cannot hide a changed module.
+# The exported .so lives outside the cache mount and remains in the image.
+RUN --mount=type=cache,id=pow-cargo-alpine-${TARGETARCH},target=/var/cache/cargo,sharing=locked \
+    --mount=type=cache,id=pow-target-alpine-${TARGETARCH},target=/src/target,sharing=locked \
+    touch src/pow-gate-core/src/lib.rs src/ngx-http-pow-gate/src/lib.rs && \
+    CARGO_HOME=/var/cache/cargo NGINX_SOURCE_DIR="/tmp/nginx-${NGINX_VERSION}" \
+    cargo build --release --locked -p ngx-http-pow-gate && \
     cp target/release/libngx_http_pow_gate.so /ngx_http_pow_gate_module.so
 
 # ─────────────── 2c. export just the .so (for `--output type=local`) ──────────
@@ -179,6 +198,7 @@ RUN nginx -t
 # uses). Run it against a live nginx via docker-compose.test.yml. The client is
 # libc-agnostic; it exercises whichever nginx (glibc/musl) it's pointed at.
 FROM ${REGISTRY}/rust:${RUST_VERSION}-trixie@${RUST_TRIXIE_DIGEST} AS e2e
+ARG CARGO_BUILD_JOBS
 RUN apt-get update && apt-get install -y --no-install-recommends libssl-dev pkg-config ca-certificates nodejs python3 python3-venv \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
@@ -187,10 +207,17 @@ COPY tests/integration/ tests/integration/
 COPY tests/pow-clearance/ tests/pow-clearance/
 RUN python3 -m venv /opt/http3 && /opt/http3/bin/pip install --no-cache-dir -r tests/pow-clearance/http3-requirements.txt
 COPY --from=test-tls /test-tls/cert.pem /test-tls/cert.pem
-RUN cd tests/integration && cargo build --release
+ARG TARGETARCH
+# Keep the standalone client cache across core edits and nginx/libc test cells.
+# Export the executable outside the mount so the test image remains runnable.
+RUN --mount=type=cache,id=pow-registry-e2e-${TARGETARCH},target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=pow-target-e2e-${TARGETARCH},target=/src/tests/integration/target,sharing=locked \
+    touch src/pow-gate-core/src/lib.rs tests/integration/src/main.rs && \
+    cargo build --manifest-path tests/integration/Cargo.toml --release --locked && \
+    cp tests/integration/target/release/pow-gate-e2e /usr/local/bin/pow-gate-e2e
 ENV BASE_URL=http://nginx:8080
 ENV HTTP3_BASE_URL=https://nginx:8443
-CMD ["sh", "-c", "/src/tests/integration/target/release/pow-gate-e2e && node /src/tests/pow-clearance/security-test.mjs \"$BASE_URL\" && node /src/tests/pow-clearance/http2-test.mjs \"$BASE_URL\" && /opt/http3/bin/python /src/tests/pow-clearance/http3-test.py \"$HTTP3_BASE_URL\" --ca-file /test-tls/cert.pem"]
+CMD ["sh", "-c", "/usr/local/bin/pow-gate-e2e && node /src/tests/pow-clearance/security-test.mjs \"$BASE_URL\" && node /src/tests/pow-clearance/http2-test.mjs \"$BASE_URL\" && /opt/http3/bin/python /src/tests/pow-clearance/http3-test.py \"$HTTP3_BASE_URL\" --ca-file /test-tls/cert.pem"]
 
 # ───────────────────────────── 5. perf load client ───────────────────────────
 # Builds the load generator (docs/performance.md). Run against a live nginx via

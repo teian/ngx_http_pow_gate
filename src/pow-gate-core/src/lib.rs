@@ -18,7 +18,9 @@
 pub mod clearance;
 pub mod codec;
 pub mod context;
+pub mod cookie;
 pub mod decision;
+pub mod feeds;
 mod mac;
 pub mod nojs;
 pub mod pow;
@@ -32,5 +34,8 @@ pub mod verdict_cache;
 
 pub use clearance::Clearance;
 pub use decision::Decision;
+pub use mac::HmacKey;
 pub use pow::Challenge;
 pub use target::{difficulty_to_target, hash_below};
+
+pub mod redis;

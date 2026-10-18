@@ -1,0 +1,5548 @@
+{
+  "platform": "linux/amd64",
+  "date": "2026-10-18",
+  "comparison": "Previous performance pass versus allocation follow-up; both modules rebuilt in the same staging directory/profile/toolchain against nginx 1.31.7",
+  "host": {
+    "cpu": "Intel(R) Core(TM) i7-8750H CPU @ 2.20GHz",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cpu_siblings": {
+      "0": "0,6",
+      "1": "1,7",
+      "2": "2,8",
+      "3": "3,9",
+      "4": "4,10",
+      "5": "5,11",
+      "6": "0,6",
+      "7": "1,7",
+      "8": "2,8",
+      "9": "3,9",
+      "10": "4,10",
+      "11": "5,11"
+    }
+  },
+  "builds": {
+    "before": {
+      "module": "/tmp/pow-alloc-20261018/matched-before-mainline.so",
+      "sha256": "ac6bc5410cae59673004e48495449b6fd328bbc25b63bde8cb5dabbeaf089884",
+      "source_sha256": {
+        "src/pow-gate-core/src/verdict_cache.rs": "1553bb025669dadf22dd139d895b51d8312afa8e34d1fcb9ad28d1eab59cf3ce",
+        "src/pow-gate-core/src/uri.rs": "900d51498cf5b3c1d398bd1e0616c2bf75c81d521127edcf492e91416e4da760",
+        "src/pow-gate-core/src/target.rs": "cfb79d84bc6fc473f15ea6606e5ddca53cf43019dbfa1971a2827bc78922b41b",
+        "src/pow-gate-core/src/replay.rs": "14fd74604ef6127721da22a0c21d5dd67242260c074d313f7b3cb2a3a6026a82",
+        "src/pow-gate-core/src/redemption.rs": "089df43813752b8e62639907f1aa271f991d943e7c6d1242deaac44a45447ab6",
+        "src/pow-gate-core/src/ranges.rs": "3e144157127f9a868f7909ec3115ca8ad66cc4c3c2b295e830d62a9a73b38618",
+        "src/pow-gate-core/src/proof.rs": "c7c10614b185f085c001557cc6f7f4ba7740f3b933efc5285e5624922f71e071",
+        "src/pow-gate-core/src/pow.rs": "23f4dc0497a281503b9b7c959bf1b79aab3f1ddb6645c72c7d749dc33c06ea15",
+        "src/pow-gate-core/src/nojs.rs": "e2d027b097a2fd742e3993346cb982d2eb25ff55649acabe59b8a76a75311011",
+        "src/pow-gate-core/src/mac.rs": "0eba1ec232701e1571133914e657cc7f3336e22f9d09b8da83330aa2a213b2c2",
+        "src/pow-gate-core/src/lib.rs": "b5f56f42b1252f4a21869067ce210fd389e4b42b068eb43b500e68afed21cb6b",
+        "src/pow-gate-core/src/decision.rs": "8b1383f272119d098fbcb328f43c5f9b152c2c27e1f4c49f90b50ff65751c0ec",
+        "src/pow-gate-core/src/context.rs": "8e4a58b91d37a77544d1673772dac46569be8ac50e0f47c8de801e331cef6aa3",
+        "src/pow-gate-core/src/codec.rs": "97e0bb2123a92fa82a7e90e0706c149c7edb41f14bfebd1d68f243b4c4570d9f",
+        "src/pow-gate-core/src/clearance.rs": "3dd0697088ff9b48cdc57871a0b7a945a06a3cc4ba958c547ce20bbdf515abd7",
+        "src/pow-gate-core/src/redis.rs": "b03d90fcc3f9d0f3a93c9cf25c4bbab96467e887cbacae8ca0cc9a7de05a5cb2",
+        "src/pow-gate-core/src/feeds.rs": "d5bbec6879d55af1823d0dcc55e060ae399865801696402617653a83b64a0b2e",
+        "src/pow-gate-core/src/cookie.rs": "f37f31c483d82b83128111e37ff2ecea8a49117e585840585c219527dc18f73e",
+        "src/ngx-http-pow-gate/src/verifier.rs": "1375db02705417e1977aa43ec8b5f99a1f7ffa0b85bc50622b683a5e46472c13",
+        "src/ngx-http-pow-gate/src/runtime.rs": "36413cef10d1ef34f6a0872970e6090717118b3b1bde851198790b7cf4d65a43",
+        "src/ngx-http-pow-gate/src/response.rs": "8f808ee86b68d4a106fded6e40f8062cb7801838030f5157b31dabefab7cf4d6",
+        "src/ngx-http-pow-gate/src/replay.rs": "96be489a646d9099899483c7a411150971eeb5e4ca03e6c76f49a10f24639c72",
+        "src/ngx-http-pow-gate/src/redemption.rs": "d580fedce811cd48ba40a9697ee05b21e79677d29825d02177eb3c559876c2ca",
+        "src/ngx-http-pow-gate/src/lib.rs": "0e5b57bb6b799fac2a200470f12ea00cda385febe70e10d204f39551b9592625",
+        "src/ngx-http-pow-gate/src/config.rs": "f262523e256f2160933a6f320dffcdec209b381c20431f860ba461c9fa0625f3",
+        "src/ngx-http-pow-gate/src/challenge.rs": "fe3de648fd2f293346d3f8ea26f1511075d7e3295875bd352c86875dd8a80094",
+        "src/ngx-http-pow-gate/src/body_limit.rs": "d733a58ae58b425397893fa39d66998659f31a7551147b4eb48072d922dcaedc",
+        "src/ngx-http-pow-gate/src/access.rs": "2593e3188145c04a38693263fcb76a82583d75b02d92172a10596d8c91cc267f",
+        "src/ngx-http-pow-gate/src/observability.rs": "2421b22244a5fca84246822a46dc8e6e92d32e744ffe979d822e8dbf56b92837",
+        "src/ngx-http-pow-gate/src/cluster.rs": "1c23ba16a76afd4e45993ab9b063fdeb00269eefba2137c1941efb3be2cfac38",
+        "src/ngx-http-pow-gate/src/engine/pow.rs": "22f2c4f1d02276b40b779e284210242545e7b00f2e9c0a119ec708b1124a7e41",
+        "src/ngx-http-pow-gate/src/engine/nojs.rs": "c86650c4273e611a0dd1877a812becf1c489dc40875d0ea33dcddfc41d54cfa2",
+        "src/ngx-http-pow-gate/src/engine/mod.rs": "b7535d7edb5f095f42747eca9eba13d0972c862a58634d5b4e26084910e1a266",
+        "src/ngx-http-pow-gate/src/engine/clearance.rs": "17d69bf93d8d7bb3b8fbbbb8efe47a99250837b33e4aa28843e0e9759f802959"
+      }
+    },
+    "after": {
+      "module": "/tmp/pow-alloc-20261018/matched-after-mainline.so",
+      "sha256": "2b07814ad9f5691b4f672e8a35d7070e8159fea7e0833a4c1af0d4abd41f467c",
+      "source_sha256": {
+        "src/pow-gate-core/src/verdict_cache.rs": "1553bb025669dadf22dd139d895b51d8312afa8e34d1fcb9ad28d1eab59cf3ce",
+        "src/pow-gate-core/src/uri.rs": "900d51498cf5b3c1d398bd1e0616c2bf75c81d521127edcf492e91416e4da760",
+        "src/pow-gate-core/src/target.rs": "cfb79d84bc6fc473f15ea6606e5ddca53cf43019dbfa1971a2827bc78922b41b",
+        "src/pow-gate-core/src/replay.rs": "14fd74604ef6127721da22a0c21d5dd67242260c074d313f7b3cb2a3a6026a82",
+        "src/pow-gate-core/src/redemption.rs": "089df43813752b8e62639907f1aa271f991d943e7c6d1242deaac44a45447ab6",
+        "src/pow-gate-core/src/ranges.rs": "3e144157127f9a868f7909ec3115ca8ad66cc4c3c2b295e830d62a9a73b38618",
+        "src/pow-gate-core/src/proof.rs": "c7c10614b185f085c001557cc6f7f4ba7740f3b933efc5285e5624922f71e071",
+        "src/pow-gate-core/src/pow.rs": "23f4dc0497a281503b9b7c959bf1b79aab3f1ddb6645c72c7d749dc33c06ea15",
+        "src/pow-gate-core/src/nojs.rs": "e2d027b097a2fd742e3993346cb982d2eb25ff55649acabe59b8a76a75311011",
+        "src/pow-gate-core/src/mac.rs": "0eba1ec232701e1571133914e657cc7f3336e22f9d09b8da83330aa2a213b2c2",
+        "src/pow-gate-core/src/lib.rs": "b5f56f42b1252f4a21869067ce210fd389e4b42b068eb43b500e68afed21cb6b",
+        "src/pow-gate-core/src/decision.rs": "8b1383f272119d098fbcb328f43c5f9b152c2c27e1f4c49f90b50ff65751c0ec",
+        "src/pow-gate-core/src/context.rs": "8e4a58b91d37a77544d1673772dac46569be8ac50e0f47c8de801e331cef6aa3",
+        "src/pow-gate-core/src/codec.rs": "2eb163b74e64acdeb33c2270aaa7ed3838417af0099e96a9f7abea88439bcc5e",
+        "src/pow-gate-core/src/clearance.rs": "186c91d422dd93157872ed00216fdcdb486efd27b2dad3765f001954642eddd1",
+        "src/pow-gate-core/src/redis.rs": "b03d90fcc3f9d0f3a93c9cf25c4bbab96467e887cbacae8ca0cc9a7de05a5cb2",
+        "src/pow-gate-core/src/feeds.rs": "d5bbec6879d55af1823d0dcc55e060ae399865801696402617653a83b64a0b2e",
+        "src/pow-gate-core/src/cookie.rs": "f37f31c483d82b83128111e37ff2ecea8a49117e585840585c219527dc18f73e",
+        "src/ngx-http-pow-gate/src/verifier.rs": "1375db02705417e1977aa43ec8b5f99a1f7ffa0b85bc50622b683a5e46472c13",
+        "src/ngx-http-pow-gate/src/runtime.rs": "36413cef10d1ef34f6a0872970e6090717118b3b1bde851198790b7cf4d65a43",
+        "src/ngx-http-pow-gate/src/response.rs": "648e442d818f98f3a3c3620fd9797b9c9972487c0491709f48a3f1bba439cc05",
+        "src/ngx-http-pow-gate/src/replay.rs": "96be489a646d9099899483c7a411150971eeb5e4ca03e6c76f49a10f24639c72",
+        "src/ngx-http-pow-gate/src/redemption.rs": "d580fedce811cd48ba40a9697ee05b21e79677d29825d02177eb3c559876c2ca",
+        "src/ngx-http-pow-gate/src/lib.rs": "0e5b57bb6b799fac2a200470f12ea00cda385febe70e10d204f39551b9592625",
+        "src/ngx-http-pow-gate/src/config.rs": "f262523e256f2160933a6f320dffcdec209b381c20431f860ba461c9fa0625f3",
+        "src/ngx-http-pow-gate/src/challenge.rs": "a3d41c9d6bcdf85e90ccb79c9023bac75a6bd62e4dc7f7119aa212156b228c2c",
+        "src/ngx-http-pow-gate/src/body_limit.rs": "d733a58ae58b425397893fa39d66998659f31a7551147b4eb48072d922dcaedc",
+        "src/ngx-http-pow-gate/src/access.rs": "75411a7ed98f379dcc545d1d74a5c5c456ee1ca40b8c86c7ebc821a17eece916",
+        "src/ngx-http-pow-gate/src/observability.rs": "2421b22244a5fca84246822a46dc8e6e92d32e744ffe979d822e8dbf56b92837",
+        "src/ngx-http-pow-gate/src/cluster.rs": "1c23ba16a76afd4e45993ab9b063fdeb00269eefba2137c1941efb3be2cfac38",
+        "src/ngx-http-pow-gate/src/engine/pow.rs": "22f2c4f1d02276b40b779e284210242545e7b00f2e9c0a119ec708b1124a7e41",
+        "src/ngx-http-pow-gate/src/engine/nojs.rs": "c86650c4273e611a0dd1877a812becf1c489dc40875d0ea33dcddfc41d54cfa2",
+        "src/ngx-http-pow-gate/src/engine/mod.rs": "b7535d7edb5f095f42747eca9eba13d0972c862a58634d5b4e26084910e1a266",
+        "src/ngx-http-pow-gate/src/engine/clearance.rs": "84a68f4b0167ee144eb0eb723f9cc5ac8a3daa3a4b647bd1a858cd9dd1b59ee6"
+      }
+    }
+  },
+  "normal_clearance_allocations": {
+    "reference": 6,
+    "borrowed": 1
+  },
+  "clearance_cpu": {
+    "clock": "Linux CLOCK_THREAD_CPUTIME_ID",
+    "samples": 30,
+    "warmup_wall_seconds": 1,
+    "measurement_target_wall_seconds": 2,
+    "server_cpu": 0,
+    "median_ns": {
+      "reference": 1842.3389090969663,
+      "borrowed": 1797.2522616320518
+    },
+    "runs": [
+      {
+        "round": 1,
+        "reference": {
+          "confidence_interval": {
+            "confidence_level": 0.95,
+            "lower_bound": 1829.761826405347,
+            "upper_bound": 1857.815345749738
+          },
+          "point_estimate": 1842.3389090969663,
+          "standard_error": 7.200464636264816
+        },
+        "borrowed": {
+          "confidence_interval": {
+            "confidence_level": 0.95,
+            "lower_bound": 1771.9954215974462,
+            "upper_bound": 1832.2508435614247
+          },
+          "point_estimate": 1797.2522616320518,
+          "standard_error": 15.802607094760786
+        }
+      },
+      {
+        "round": 2,
+        "borrowed": {
+          "confidence_interval": {
+            "confidence_level": 0.95,
+            "lower_bound": 1776.9298451273644,
+            "upper_bound": 1823.855413032779
+          },
+          "point_estimate": 1796.9782962233337,
+          "standard_error": 12.087943209997352
+        },
+        "reference": {
+          "confidence_interval": {
+            "confidence_level": 0.95,
+            "lower_bound": 1810.5887578010102,
+            "upper_bound": 1929.5731016010263
+          },
+          "point_estimate": 1859.7007559857525,
+          "standard_error": 31.088921328973765
+        }
+      },
+      {
+        "round": 3,
+        "reference": {
+          "confidence_interval": {
+            "confidence_level": 0.95,
+            "lower_bound": 1802.6925512735766,
+            "upper_bound": 1811.9256328010154
+          },
+          "point_estimate": 1807.113225934219,
+          "standard_error": 2.3646736416835266
+        },
+        "borrowed": {
+          "confidence_interval": {
+            "confidence_level": 0.95,
+            "lower_bound": 1778.3499066647792,
+            "upper_bound": 1900.578671086505
+          },
+          "point_estimate": 1826.9947478117606,
+          "standard_error": 32.33851000825909
+        }
+      }
+    ],
+    "benchmark_sha256": "0e846aad9dab29b081a2cb24b261e3b8e42b1eb579114ed0841d5ecd50ceef93"
+  },
+  "shared_http": {
+    "platform": "linux/amd64",
+    "seconds": 5,
+    "concurrency": 8,
+    "concurrencies": [
+      8
+    ],
+    "workers": 4,
+    "modes": [
+      "baseline",
+      "challenge",
+      "cleared",
+      "proof"
+    ],
+    "server_cpus": null,
+    "client_cpus": null,
+    "sha256": {
+      "before": "ac6bc5410cae59673004e48495449b6fd328bbc25b63bde8cb5dabbeaf089884",
+      "after": "2b07814ad9f5691b4f672e8a35d7070e8159fea7e0833a4c1af0d4abd41f467c",
+      "client": "b393326efe240e8dc0c4d80232d4ea34f6884a9a94a1175627e0e657fcf39ec4",
+      "nginx": "295859d4ef827bf87b7c38d3f8792acd1fe6684ee9fc9aa1bb48a9c0c6755dd4"
+    },
+    "runs": [
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "baseline",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 316270,
+        "rps": 63191.76194076879,
+        "errors": 0,
+        "p50_us": 116,
+        "p95_us": 167,
+        "p99_us": 243,
+        "max_us": 3757,
+        "client_elapsed_seconds": 5.004924539,
+        "host_load_before": [
+          6.07666015625,
+          3.91064453125,
+          3.1005859375
+        ],
+        "host_load_after": [
+          6.95166015625,
+          4.12841796875,
+          3.17529296875
+        ],
+        "worker_cpu_seconds": 13.1,
+        "client_cpu_seconds": 16.712799999999987,
+        "worker_cpu_cores": 2.6174220805769473,
+        "client_cpu_cores": 3.3392711258218606,
+        "worker_cpu_us_per_request": 41.42
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "baseline",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 313725,
+        "rps": 62673.59435697037,
+        "errors": 0,
+        "p50_us": 117,
+        "p95_us": 169,
+        "p99_us": 269,
+        "max_us": 2890,
+        "client_elapsed_seconds": 5.005696629,
+        "host_load_before": [
+          6.95166015625,
+          4.12841796875,
+          3.17529296875
+        ],
+        "host_load_after": [
+          7.19580078125,
+          4.22607421875,
+          3.21240234375
+        ],
+        "worker_cpu_seconds": 13.06,
+        "client_cpu_seconds": 16.690213999999997,
+        "worker_cpu_cores": 2.6090274676931484,
+        "client_cpu_cores": 3.334244009776166,
+        "worker_cpu_us_per_request": 41.629
+      },
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "challenge",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 284574,
+        "rps": 56865.75657179755,
+        "errors": 0,
+        "p50_us": 129,
+        "p95_us": 185,
+        "p99_us": 250,
+        "max_us": 3136,
+        "client_elapsed_seconds": 5.004312211,
+        "host_load_before": [
+          7.19580078125,
+          4.22607421875,
+          3.21240234375
+        ],
+        "host_load_after": [
+          7.58056640625,
+          4.35546875,
+          3.259765625
+        ],
+        "worker_cpu_seconds": 10.07,
+        "client_cpu_seconds": 20.214627000000007,
+        "worker_cpu_cores": 2.0122645381447404,
+        "client_cpu_cores": 4.039441615086714,
+        "worker_cpu_us_per_request": 35.386
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "challenge",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 294159,
+        "rps": 58779.464516422624,
+        "errors": 0,
+        "p50_us": 125,
+        "p95_us": 183,
+        "p99_us": 250,
+        "max_us": 3570,
+        "client_elapsed_seconds": 5.004451851,
+        "host_load_before": [
+          7.58056640625,
+          4.35546875,
+          3.259765625
+        ],
+        "host_load_after": [
+          8.0947265625,
+          4.515625,
+          3.31787109375
+        ],
+        "worker_cpu_seconds": 9.58,
+        "client_cpu_seconds": 20.850488000000013,
+        "worker_cpu_cores": 1.9142955682720186,
+        "client_cpu_cores": 4.166387972307821,
+        "worker_cpu_us_per_request": 32.567
+      },
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "cleared",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 251762,
+        "rps": 50307.065546408936,
+        "errors": 0,
+        "p50_us": 141,
+        "p95_us": 222,
+        "p99_us": 307,
+        "max_us": 3246,
+        "client_elapsed_seconds": 5.004505774,
+        "host_load_before": [
+          8.0947265625,
+          4.515625,
+          3.31787109375
+        ],
+        "host_load_after": [
+          7.9267578125,
+          4.54052734375,
+          3.33251953125
+        ],
+        "worker_cpu_seconds": 14.97,
+        "client_cpu_seconds": 13.691111999999976,
+        "worker_cpu_cores": 2.9913043717071752,
+        "client_cpu_cores": 2.735757059394288,
+        "worker_cpu_us_per_request": 59.461
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "cleared",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 243031,
+        "rps": 48568.9230018998,
+        "errors": 0,
+        "p50_us": 147,
+        "p95_us": 227,
+        "p99_us": 317,
+        "max_us": 9715,
+        "client_elapsed_seconds": 5.003837536,
+        "host_load_before": [
+          7.9267578125,
+          4.54052734375,
+          3.33251953125
+        ],
+        "host_load_after": [
+          8.09326171875,
+          4.63134765625,
+          3.36865234375
+        ],
+        "worker_cpu_seconds": 14.9,
+        "client_cpu_seconds": 13.911624000000018,
+        "worker_cpu_cores": 2.9777145826182956,
+        "client_cpu_cores": 2.780190983402867,
+        "worker_cpu_us_per_request": 61.309
+      },
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "proof",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 49453,
+        "rps": 9887.116776669272,
+        "errors": 0,
+        "p50_us": 770,
+        "p95_us": 1130,
+        "p99_us": 1444,
+        "max_us": 4488,
+        "client_elapsed_seconds": 5.001761496,
+        "host_load_before": [
+          8.09326171875,
+          4.63134765625,
+          3.36865234375
+        ],
+        "host_load_after": [
+          8.326171875,
+          4.7373046875,
+          3.40966796875
+        ],
+        "worker_cpu_seconds": 10.12,
+        "client_cpu_seconds": 24.270670999999965,
+        "worker_cpu_cores": 2.0232871975389366,
+        "client_cpu_cores": 4.852424694662003,
+        "worker_cpu_us_per_request": 204.639
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "proof",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 54857,
+        "rps": 10964.900706421899,
+        "errors": 0,
+        "p50_us": 722,
+        "p95_us": 884,
+        "p99_us": 1194,
+        "max_us": 3636,
+        "client_elapsed_seconds": 5.002963681,
+        "host_load_before": [
+          8.326171875,
+          4.7373046875,
+          3.40966796875
+        ],
+        "host_load_after": [
+          8.46044921875,
+          4.82470703125,
+          3.4453125
+        ],
+        "worker_cpu_seconds": 10.61,
+        "client_cpu_seconds": 25.479313999999988,
+        "worker_cpu_cores": 2.1207429588773783,
+        "client_cpu_cores": 5.092844086948707,
+        "worker_cpu_us_per_request": 193.412
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "baseline",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 326670,
+        "rps": 65260.19264077295,
+        "errors": 0,
+        "p50_us": 113,
+        "p95_us": 163,
+        "p99_us": 210,
+        "max_us": 2816,
+        "client_elapsed_seconds": 5.005654853,
+        "host_load_before": [
+          8.46044921875,
+          4.82470703125,
+          3.4453125
+        ],
+        "host_load_after": [
+          8.50390625,
+          4.89404296875,
+          3.4755859375
+        ],
+        "worker_cpu_seconds": 13.47,
+        "client_cpu_seconds": 17.147249999999985,
+        "worker_cpu_cores": 2.690956607191391,
+        "client_cpu_cores": 3.425575774510953,
+        "worker_cpu_us_per_request": 41.234
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "baseline",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 328223,
+        "rps": 65578.328875427,
+        "errors": 0,
+        "p50_us": 112,
+        "p95_us": 159,
+        "p99_us": 200,
+        "max_us": 3264,
+        "client_elapsed_seconds": 5.005052822,
+        "host_load_before": [
+          8.50390625,
+          4.89404296875,
+          3.4755859375
+        ],
+        "host_load_after": [
+          8.7841796875,
+          5.01220703125,
+          3.521484375
+        ],
+        "worker_cpu_seconds": 13.51,
+        "client_cpu_seconds": 17.069976999999994,
+        "worker_cpu_cores": 2.6992722115970507,
+        "client_cpu_cores": 3.4105488207772594,
+        "worker_cpu_us_per_request": 41.161
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "challenge",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 297024,
+        "rps": 59350.577217693,
+        "errors": 0,
+        "p50_us": 124,
+        "p95_us": 179,
+        "p99_us": 242,
+        "max_us": 2294,
+        "client_elapsed_seconds": 5.004568008,
+        "host_load_before": [
+          8.7841796875,
+          5.01220703125,
+          3.521484375
+        ],
+        "host_load_after": [
+          8.9619140625,
+          5.11181640625,
+          3.56201171875
+        ],
+        "worker_cpu_seconds": 9.88,
+        "client_cpu_seconds": 21.023356999999976,
+        "worker_cpu_cores": 1.974196371036707,
+        "client_cpu_cores": 4.200833511782298,
+        "worker_cpu_us_per_request": 33.263
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "challenge",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 282631,
+        "rps": 56476.02181139926,
+        "errors": 0,
+        "p50_us": 130,
+        "p95_us": 190,
+        "p99_us": 265,
+        "max_us": 4656,
+        "client_elapsed_seconds": 5.004442433,
+        "host_load_before": [
+          8.9619140625,
+          5.11181640625,
+          3.56201171875
+        ],
+        "host_load_after": [
+          9.12548828125,
+          5.2099609375,
+          3.60205078125
+        ],
+        "worker_cpu_seconds": 10.04,
+        "client_cpu_seconds": 20.318887000000018,
+        "worker_cpu_cores": 2.0062175026322255,
+        "client_cpu_cores": 4.060169993367174,
+        "worker_cpu_us_per_request": 35.523
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "cleared",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 263272,
+        "rps": 52612.941128661674,
+        "errors": 0,
+        "p50_us": 138,
+        "p95_us": 212,
+        "p99_us": 257,
+        "max_us": 3024,
+        "client_elapsed_seconds": 5.003939988,
+        "host_load_before": [
+          9.12548828125,
+          5.2099609375,
+          3.60205078125
+        ],
+        "host_load_after": [
+          9.03515625,
+          5.25634765625,
+          3.6259765625
+        ],
+        "worker_cpu_seconds": 15.33,
+        "client_cpu_seconds": 14.012124000000085,
+        "worker_cpu_cores": 3.0635859016620963,
+        "client_cpu_cores": 2.8002182347515565,
+        "worker_cpu_us_per_request": 58.229
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "cleared",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 258760,
+        "rps": 51710.562289041634,
+        "errors": 0,
+        "p50_us": 139,
+        "p95_us": 212,
+        "p99_us": 254,
+        "max_us": 1591,
+        "client_elapsed_seconds": 5.004006697,
+        "host_load_before": [
+          9.03515625,
+          5.25634765625,
+          3.6259765625
+        ],
+        "host_load_after": [
+          8.9521484375,
+          5.30224609375,
+          3.64990234375
+        ],
+        "worker_cpu_seconds": 15.27,
+        "client_cpu_seconds": 14.009482999999989,
+        "worker_cpu_cores": 3.051554669012466,
+        "client_cpu_cores": 2.7996531276424843,
+        "worker_cpu_us_per_request": 59.012
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "proof",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 53568,
+        "rps": 10709.733015280708,
+        "errors": 0,
+        "p50_us": 734,
+        "p95_us": 934,
+        "p99_us": 1188,
+        "max_us": 2828,
+        "client_elapsed_seconds": 5.00180536,
+        "host_load_before": [
+          8.9521484375,
+          5.30224609375,
+          3.64990234375
+        ],
+        "host_load_after": [
+          8.87548828125,
+          5.34716796875,
+          3.67333984375
+        ],
+        "worker_cpu_seconds": 10.17,
+        "client_cpu_seconds": 24.725306000000046,
+        "worker_cpu_cores": 2.033265844634946,
+        "client_cpu_cores": 4.943276321332114,
+        "worker_cpu_us_per_request": 189.852
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "proof",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 52674,
+        "rps": 10530.006978801408,
+        "errors": 0,
+        "p50_us": 745,
+        "p95_us": 975,
+        "p99_us": 1228,
+        "max_us": 5123,
+        "client_elapsed_seconds": 5.002275887,
+        "host_load_before": [
+          8.87548828125,
+          5.34716796875,
+          3.67333984375
+        ],
+        "host_load_after": [
+          9.0458984375,
+          5.44140625,
+          3.712890625
+        ],
+        "worker_cpu_seconds": 10.33,
+        "client_cpu_seconds": 24.73388299999999,
+        "worker_cpu_cores": 2.065060031344089,
+        "client_cpu_cores": 4.9445259635276875,
+        "worker_cpu_us_per_request": 196.112
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "baseline",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 323516,
+        "rps": 64641.37605710317,
+        "errors": 0,
+        "p50_us": 114,
+        "p95_us": 162,
+        "p99_us": 209,
+        "max_us": 2139,
+        "client_elapsed_seconds": 5.004782072,
+        "host_load_before": [
+          9.0458984375,
+          5.44140625,
+          3.712890625
+        ],
+        "host_load_after": [
+          8.9619140625,
+          5.48388671875,
+          3.736328125
+        ],
+        "worker_cpu_seconds": 13.36,
+        "client_cpu_seconds": 16.989400999999987,
+        "worker_cpu_cores": 2.669446902542373,
+        "client_cpu_cores": 3.3946335236152887,
+        "worker_cpu_us_per_request": 41.296
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "baseline",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 332685,
+        "rps": 66467.15554193752,
+        "errors": 0,
+        "p50_us": 110,
+        "p95_us": 158,
+        "p99_us": 222,
+        "max_us": 2538,
+        "client_elapsed_seconds": 5.005254058,
+        "host_load_before": [
+          8.9619140625,
+          5.48388671875,
+          3.736328125
+        ],
+        "host_load_after": [
+          8.96533203125,
+          5.54248046875,
+          3.7646484375
+        ],
+        "worker_cpu_seconds": 13.63,
+        "client_cpu_seconds": 17.30412899999999,
+        "worker_cpu_cores": 2.723138494481592,
+        "client_cpu_cores": 3.457192941553575,
+        "worker_cpu_us_per_request": 40.97
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "challenge",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 301215,
+        "rps": 60173.27411031278,
+        "errors": 0,
+        "p50_us": 124,
+        "p95_us": 174,
+        "p99_us": 283,
+        "max_us": 3114,
+        "client_elapsed_seconds": 5.005793759,
+        "host_load_before": [
+          8.96533203125,
+          5.54248046875,
+          3.7646484375
+        ],
+        "host_load_after": [
+          8.8876953125,
+          5.58349609375,
+          3.78759765625
+        ],
+        "worker_cpu_seconds": 10.65,
+        "client_cpu_seconds": 21.22105799999997,
+        "worker_cpu_cores": 2.1275347153190616,
+        "client_cpu_cores": 4.239299304300397,
+        "worker_cpu_us_per_request": 35.357
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "challenge",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 303070,
+        "rps": 60554.48813903774,
+        "errors": 0,
+        "p50_us": 123,
+        "p95_us": 171,
+        "p99_us": 224,
+        "max_us": 2543,
+        "client_elapsed_seconds": 5.00491391,
+        "host_load_before": [
+          8.8876953125,
+          5.58349609375,
+          3.78759765625
+        ],
+        "host_load_after": [
+          8.89697265625,
+          5.640625,
+          3.81591796875
+        ],
+        "worker_cpu_seconds": 9.93,
+        "client_cpu_seconds": 21.20130199999994,
+        "worker_cpu_cores": 1.9840501112635522,
+        "client_cpu_cores": 4.236097239882382,
+        "worker_cpu_us_per_request": 32.765
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "cleared",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 270310,
+        "rps": 54017.420546385416,
+        "errors": 0,
+        "p50_us": 136,
+        "p95_us": 205,
+        "p99_us": 224,
+        "max_us": 1809,
+        "client_elapsed_seconds": 5.004126396,
+        "host_load_before": [
+          8.89697265625,
+          5.640625,
+          3.81591796875
+        ],
+        "host_load_after": [
+          8.74462890625,
+          5.66357421875,
+          3.83349609375
+        ],
+        "worker_cpu_seconds": 15.61,
+        "client_cpu_seconds": 14.242304999999988,
+        "worker_cpu_cores": 3.119425602933951,
+        "client_cpu_cores": 2.8461121628311457,
+        "worker_cpu_us_per_request": 57.749
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "cleared",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 268982,
+        "rps": 53751.21313965377,
+        "errors": 0,
+        "p50_us": 136,
+        "p95_us": 207,
+        "p99_us": 239,
+        "max_us": 1463,
+        "client_elapsed_seconds": 5.004203334,
+        "host_load_before": [
+          8.74462890625,
+          5.66357421875,
+          3.83349609375
+        ],
+        "host_load_after": [
+          8.6044921875,
+          5.68603515625,
+          3.8505859375
+        ],
+        "worker_cpu_seconds": 15.5,
+        "client_cpu_seconds": 14.142358999999942,
+        "worker_cpu_cores": 3.0973961219138584,
+        "client_cpu_cores": 2.8260959949234437,
+        "worker_cpu_us_per_request": 57.625
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "proof",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 55661,
+        "rps": 11126.957547303937,
+        "errors": 0,
+        "p50_us": 721,
+        "p95_us": 855,
+        "p99_us": 990,
+        "max_us": 3072,
+        "client_elapsed_seconds": 5.002355744,
+        "host_load_before": [
+          8.6044921875,
+          5.68603515625,
+          3.8505859375
+        ],
+        "host_load_after": [
+          8.5556640625,
+          5.724609375,
+          3.873046875
+        ],
+        "worker_cpu_seconds": 10.47,
+        "client_cpu_seconds": 25.18181000000004,
+        "worker_cpu_cores": 2.0930138790225152,
+        "client_cpu_cores": 5.033990241538496,
+        "worker_cpu_us_per_request": 188.103
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "proof",
+        "concurrency": 8,
+        "workers": 4,
+        "worker_cpu_affinities": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ],
+          [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        ],
+        "requests": 55355,
+        "rps": 11065.261535450245,
+        "errors": 0,
+        "p50_us": 724,
+        "p95_us": 851,
+        "p99_us": 1048,
+        "max_us": 3696,
+        "client_elapsed_seconds": 5.002593009,
+        "host_load_before": [
+          8.5556640625,
+          5.724609375,
+          3.873046875
+        ],
+        "host_load_after": [
+          8.5107421875,
+          5.7626953125,
+          3.8955078125
+        ],
+        "worker_cpu_seconds": 10.61,
+        "client_cpu_seconds": 25.502436999999986,
+        "worker_cpu_cores": 2.120900097391872,
+        "client_cpu_cores": 5.0978436491074515,
+        "worker_cpu_us_per_request": 191.672
+      }
+    ],
+    "warmup": {
+      "module": "after",
+      "round": 0,
+      "mode": "proof",
+      "concurrency": 8,
+      "workers": 4,
+      "worker_cpu_affinities": [
+        [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ],
+        [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ],
+        [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ],
+        [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ]
+      ],
+      "requests": 294204,
+      "rps": 9805.261601193188,
+      "errors": 0,
+      "p50_us": 780,
+      "p95_us": 1127,
+      "p99_us": 1437,
+      "max_us": 7932,
+      "client_elapsed_seconds": 30.004706857,
+      "host_load_before": [
+        3.67578125,
+        3.28466796875,
+        2.8779296875
+      ],
+      "host_load_after": [
+        6.07666015625,
+        3.91064453125,
+        3.1005859375
+      ],
+      "worker_cpu_seconds": 60.8,
+      "client_cpu_seconds": 144.940471,
+      "worker_cpu_cores": 2.026348742207943,
+      "client_cpu_cores": 4.830591136609817,
+      "worker_cpu_us_per_request": 206.659
+    },
+    "medians_by_concurrency": {
+      "8": {
+        "before": {
+          "baseline": {
+            "rps": 64641.37605710317,
+            "p50_us": 114,
+            "p95_us": 162,
+            "p99_us": 209,
+            "worker_cpu_us_per_request": 41.296,
+            "worker_cpu_cores": 2.669446902542373,
+            "client_cpu_cores": 3.3946335236152887
+          },
+          "challenge": {
+            "rps": 56865.75657179755,
+            "p50_us": 129,
+            "p95_us": 185,
+            "p99_us": 265,
+            "worker_cpu_us_per_request": 35.386,
+            "worker_cpu_cores": 2.0122645381447404,
+            "client_cpu_cores": 4.060169993367174
+          },
+          "cleared": {
+            "rps": 51710.562289041634,
+            "p50_us": 139,
+            "p95_us": 212,
+            "p99_us": 254,
+            "worker_cpu_us_per_request": 59.012,
+            "worker_cpu_cores": 3.051554669012466,
+            "client_cpu_cores": 2.7996531276424843
+          },
+          "proof": {
+            "rps": 10530.006978801408,
+            "p50_us": 745,
+            "p95_us": 975,
+            "p99_us": 1228,
+            "worker_cpu_us_per_request": 196.112,
+            "worker_cpu_cores": 2.065060031344089,
+            "client_cpu_cores": 4.9445259635276875
+          }
+        },
+        "after": {
+          "baseline": {
+            "rps": 65260.19264077295,
+            "p50_us": 113,
+            "p95_us": 163,
+            "p99_us": 222,
+            "worker_cpu_us_per_request": 41.234,
+            "worker_cpu_cores": 2.690956607191391,
+            "client_cpu_cores": 3.425575774510953
+          },
+          "challenge": {
+            "rps": 59350.577217693,
+            "p50_us": 124,
+            "p95_us": 179,
+            "p99_us": 242,
+            "worker_cpu_us_per_request": 32.765,
+            "worker_cpu_cores": 1.974196371036707,
+            "client_cpu_cores": 4.200833511782298
+          },
+          "cleared": {
+            "rps": 52612.941128661674,
+            "p50_us": 138,
+            "p95_us": 212,
+            "p99_us": 257,
+            "worker_cpu_us_per_request": 58.229,
+            "worker_cpu_cores": 3.0635859016620963,
+            "client_cpu_cores": 2.8002182347515565
+          },
+          "proof": {
+            "rps": 10964.900706421899,
+            "p50_us": 724,
+            "p95_us": 884,
+            "p99_us": 1188,
+            "worker_cpu_us_per_request": 191.672,
+            "worker_cpu_cores": 2.1207429588773783,
+            "client_cpu_cores": 5.092844086948707
+          }
+        }
+      }
+    },
+    "medians": {
+      "before": {
+        "baseline": {
+          "rps": 64641.37605710317,
+          "p50_us": 114,
+          "p95_us": 162,
+          "p99_us": 209,
+          "worker_cpu_us_per_request": 41.296,
+          "worker_cpu_cores": 2.669446902542373,
+          "client_cpu_cores": 3.3946335236152887
+        },
+        "challenge": {
+          "rps": 56865.75657179755,
+          "p50_us": 129,
+          "p95_us": 185,
+          "p99_us": 265,
+          "worker_cpu_us_per_request": 35.386,
+          "worker_cpu_cores": 2.0122645381447404,
+          "client_cpu_cores": 4.060169993367174
+        },
+        "cleared": {
+          "rps": 51710.562289041634,
+          "p50_us": 139,
+          "p95_us": 212,
+          "p99_us": 254,
+          "worker_cpu_us_per_request": 59.012,
+          "worker_cpu_cores": 3.051554669012466,
+          "client_cpu_cores": 2.7996531276424843
+        },
+        "proof": {
+          "rps": 10530.006978801408,
+          "p50_us": 745,
+          "p95_us": 975,
+          "p99_us": 1228,
+          "worker_cpu_us_per_request": 196.112,
+          "worker_cpu_cores": 2.065060031344089,
+          "client_cpu_cores": 4.9445259635276875
+        }
+      },
+      "after": {
+        "baseline": {
+          "rps": 65260.19264077295,
+          "p50_us": 113,
+          "p95_us": 163,
+          "p99_us": 222,
+          "worker_cpu_us_per_request": 41.234,
+          "worker_cpu_cores": 2.690956607191391,
+          "client_cpu_cores": 3.425575774510953
+        },
+        "challenge": {
+          "rps": 59350.577217693,
+          "p50_us": 124,
+          "p95_us": 179,
+          "p99_us": 242,
+          "worker_cpu_us_per_request": 32.765,
+          "worker_cpu_cores": 1.974196371036707,
+          "client_cpu_cores": 4.200833511782298
+        },
+        "cleared": {
+          "rps": 52612.941128661674,
+          "p50_us": 138,
+          "p95_us": 212,
+          "p99_us": 257,
+          "worker_cpu_us_per_request": 58.229,
+          "worker_cpu_cores": 3.0635859016620963,
+          "client_cpu_cores": 2.8002182347515565
+        },
+        "proof": {
+          "rps": 10964.900706421899,
+          "p50_us": 724,
+          "p95_us": 884,
+          "p99_us": 1188,
+          "worker_cpu_us_per_request": 191.672,
+          "worker_cpu_cores": 2.1207429588773783,
+          "client_cpu_cores": 5.092844086948707
+        }
+      }
+    }
+  },
+  "isolated_http": {
+    "platform": "linux/amd64",
+    "seconds": 3,
+    "concurrency": null,
+    "concurrencies": [
+      1,
+      4,
+      16
+    ],
+    "workers": 1,
+    "modes": [
+      "baseline",
+      "challenge",
+      "cleared",
+      "proof"
+    ],
+    "server_cpus": [
+      0
+    ],
+    "client_cpus": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      7,
+      8,
+      9,
+      10,
+      11
+    ],
+    "sha256": {
+      "before": "ac6bc5410cae59673004e48495449b6fd328bbc25b63bde8cb5dabbeaf089884",
+      "after": "2b07814ad9f5691b4f672e8a35d7070e8159fea7e0833a4c1af0d4abd41f467c",
+      "client": "b393326efe240e8dc0c4d80232d4ea34f6884a9a94a1175627e0e657fcf39ec4",
+      "nginx": "295859d4ef827bf87b7c38d3f8792acd1fe6684ee9fc9aa1bb48a9c0c6755dd4"
+    },
+    "runs": [
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "baseline",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 60036,
+        "rps": 20006.741188065236,
+        "errors": 0,
+        "p50_us": 47,
+        "p95_us": 61,
+        "p99_us": 75,
+        "max_us": 893,
+        "client_elapsed_seconds": 3.000788556,
+        "host_load_before": [
+          2.97998046875,
+          3.4619140625,
+          2.83203125
+        ],
+        "host_load_after": [
+          2.8212890625,
+          3.4208984375,
+          2.82177734375
+        ],
+        "worker_cpu_seconds": 1.35,
+        "client_cpu_seconds": 1.3191479999999984,
+        "worker_cpu_cores": 0.4498817476828581,
+        "client_cpu_cores": 0.43960045014247867,
+        "worker_cpu_us_per_request": 22.487
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "baseline",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 62972,
+        "rps": 20984.93644297678,
+        "errors": 0,
+        "p50_us": 45,
+        "p95_us": 55,
+        "p99_us": 69,
+        "max_us": 1078,
+        "client_elapsed_seconds": 3.000819191,
+        "host_load_before": [
+          2.8212890625,
+          3.4208984375,
+          2.82177734375
+        ],
+        "host_load_after": [
+          2.8212890625,
+          3.4208984375,
+          2.82177734375
+        ],
+        "worker_cpu_seconds": 1.37,
+        "client_cpu_seconds": 1.3034569999999945,
+        "worker_cpu_cores": 0.4565420016337132,
+        "client_cpu_cores": 0.43436705680545434,
+        "worker_cpu_us_per_request": 21.756
+      },
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "challenge",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 58523,
+        "rps": 19502.171429310725,
+        "errors": 0,
+        "p50_us": 49,
+        "p95_us": 60,
+        "p99_us": 76,
+        "max_us": 2209,
+        "client_elapsed_seconds": 3.000845327,
+        "host_load_before": [
+          2.8212890625,
+          3.4208984375,
+          2.82177734375
+        ],
+        "host_load_after": [
+          2.75537109375,
+          3.39697265625,
+          2.81689453125
+        ],
+        "worker_cpu_seconds": 1.01,
+        "client_cpu_seconds": 1.5998380000000054,
+        "worker_cpu_cores": 0.3365718289151929,
+        "client_cpu_cores": 0.5331291105227982,
+        "worker_cpu_us_per_request": 17.258
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "challenge",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 59156,
+        "rps": 19713.195873689932,
+        "errors": 0,
+        "p50_us": 48,
+        "p95_us": 60,
+        "p99_us": 75,
+        "max_us": 1260,
+        "client_elapsed_seconds": 3.000832558,
+        "host_load_before": [
+          2.75537109375,
+          3.39697265625,
+          2.81689453125
+        ],
+        "host_load_after": [
+          2.61474609375,
+          3.35693359375,
+          2.80712890625
+        ],
+        "worker_cpu_seconds": 0.98,
+        "client_cpu_seconds": 1.6046399999999892,
+        "worker_cpu_cores": 0.32657603550301123,
+        "client_cpu_cores": 0.5347316016423963,
+        "worker_cpu_us_per_request": 16.566
+      },
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "cleared",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 46901,
+        "rps": 15630.243362026004,
+        "errors": 0,
+        "p50_us": 60,
+        "p95_us": 77,
+        "p99_us": 104,
+        "max_us": 2277,
+        "client_elapsed_seconds": 3.000657054,
+        "host_load_before": [
+          2.61474609375,
+          3.35693359375,
+          2.80712890625
+        ],
+        "host_load_after": [
+          2.61474609375,
+          3.35693359375,
+          2.80712890625
+        ],
+        "worker_cpu_seconds": 1.58,
+        "client_cpu_seconds": 1.1392560000000032,
+        "worker_cpu_cores": 0.5265513424447471,
+        "client_cpu_cores": 0.379668845688756,
+        "worker_cpu_us_per_request": 33.688
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "cleared",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 51063,
+        "rps": 17016.334926403033,
+        "errors": 0,
+        "p50_us": 56,
+        "p95_us": 69,
+        "p99_us": 82,
+        "max_us": 851,
+        "client_elapsed_seconds": 3.000822458,
+        "host_load_before": [
+          2.61474609375,
+          3.35693359375,
+          2.80712890625
+        ],
+        "host_load_after": [
+          2.4853515625,
+          3.3173828125,
+          2.79736328125
+        ],
+        "worker_cpu_seconds": 1.59,
+        "client_cpu_seconds": 1.1495290000000153,
+        "worker_cpu_cores": 0.5298547389103818,
+        "client_cpu_cores": 0.38307131331127064,
+        "worker_cpu_us_per_request": 31.138
+      },
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "proof",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 8161,
+        "rps": 2720.029897678068,
+        "errors": 0,
+        "p50_us": 355,
+        "p95_us": 487,
+        "p99_us": 559,
+        "max_us": 1237,
+        "client_elapsed_seconds": 3.000334668,
+        "host_load_before": [
+          2.4853515625,
+          3.3173828125,
+          2.79736328125
+        ],
+        "host_load_after": [
+          2.4853515625,
+          3.3173828125,
+          2.79736328125
+        ],
+        "worker_cpu_seconds": 0.82,
+        "client_cpu_seconds": 1.7908320000000089,
+        "worker_cpu_cores": 0.27330284476118316,
+        "client_cpu_cores": 0.596877414743124,
+        "worker_cpu_us_per_request": 100.478
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "proof",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 8422,
+        "rps": 2806.8650659056316,
+        "errors": 0,
+        "p50_us": 350,
+        "p95_us": 442,
+        "p99_us": 488,
+        "max_us": 2264,
+        "client_elapsed_seconds": 3.000500488,
+        "host_load_before": [
+          2.4853515625,
+          3.3173828125,
+          2.79736328125
+        ],
+        "host_load_after": [
+          2.3662109375,
+          3.27880859375,
+          2.78759765625
+        ],
+        "worker_cpu_seconds": 0.83,
+        "client_cpu_seconds": 1.78612600000001,
+        "worker_cpu_cores": 0.27662051825002065,
+        "client_cpu_cores": 0.5952760238311317,
+        "worker_cpu_us_per_request": 98.551
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "baseline",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 136474,
+        "rps": 45464.53176453548,
+        "errors": 0,
+        "p50_us": 87,
+        "p95_us": 114,
+        "p99_us": 133,
+        "max_us": 1024,
+        "client_elapsed_seconds": 3.001768515,
+        "host_load_before": [
+          2.3662109375,
+          3.27880859375,
+          2.78759765625
+        ],
+        "host_load_after": [
+          2.33642578125,
+          3.25732421875,
+          2.783203125
+        ],
+        "worker_cpu_seconds": 2.29,
+        "client_cpu_seconds": 3.941029999999998,
+        "worker_cpu_cores": 0.7628836096310377,
+        "client_cpu_cores": 1.312902703958169,
+        "worker_cpu_us_per_request": 16.78
+      },
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "baseline",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 126877,
+        "rps": 42268.95003745541,
+        "errors": 0,
+        "p50_us": 90,
+        "p95_us": 119,
+        "p99_us": 138,
+        "max_us": 937,
+        "client_elapsed_seconds": 3.001659608,
+        "host_load_before": [
+          2.33642578125,
+          3.25732421875,
+          2.783203125
+        ],
+        "host_load_after": [
+          2.33642578125,
+          3.25732421875,
+          2.783203125
+        ],
+        "worker_cpu_seconds": 2.29,
+        "client_cpu_seconds": 3.9452519999999964,
+        "worker_cpu_cores": 0.7629112887739534,
+        "client_cpu_cores": 1.3143568942611417,
+        "worker_cpu_us_per_request": 18.049
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "challenge",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 144455,
+        "rps": 48119.741944671754,
+        "errors": 0,
+        "p50_us": 81,
+        "p95_us": 107,
+        "p99_us": 124,
+        "max_us": 947,
+        "client_elapsed_seconds": 3.00199033,
+        "host_load_before": [
+          2.33642578125,
+          3.25732421875,
+          2.783203125
+        ],
+        "host_load_after": [
+          2.4697265625,
+          3.27001953125,
+          2.7900390625
+        ],
+        "worker_cpu_seconds": 2.11,
+        "client_cpu_seconds": 6.265669000000003,
+        "worker_cpu_cores": 0.7028670208941012,
+        "client_cpu_cores": 2.087171613241007,
+        "worker_cpu_us_per_request": 14.607
+      },
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "challenge",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 141457,
+        "rps": 47121.22416815779,
+        "errors": 0,
+        "p50_us": 80,
+        "p95_us": 110,
+        "p99_us": 129,
+        "max_us": 942,
+        "client_elapsed_seconds": 3.001980583,
+        "host_load_before": [
+          2.4697265625,
+          3.27001953125,
+          2.7900390625
+        ],
+        "host_load_after": [
+          2.4697265625,
+          3.27001953125,
+          2.7900390625
+        ],
+        "worker_cpu_seconds": 2.15,
+        "client_cpu_seconds": 6.182761999999997,
+        "worker_cpu_cores": 0.716193839552226,
+        "client_cpu_cores": 2.0595609561942316,
+        "worker_cpu_us_per_request": 15.199
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "cleared",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 88513,
+        "rps": 29491.448883044202,
+        "errors": 0,
+        "p50_us": 129,
+        "p95_us": 178,
+        "p99_us": 215,
+        "max_us": 1049,
+        "client_elapsed_seconds": 3.001310663,
+        "host_load_before": [
+          2.4697265625,
+          3.27001953125,
+          2.7900390625
+        ],
+        "host_load_after": [
+          2.431640625,
+          3.24853515625,
+          2.78564453125
+        ],
+        "worker_cpu_seconds": 2.47,
+        "client_cpu_seconds": 2.8411650000000037,
+        "worker_cpu_cores": 0.8229737862361369,
+        "client_cpu_cores": 0.9466414240370837,
+        "worker_cpu_us_per_request": 27.906
+      },
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "cleared",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 86606,
+        "rps": 28855.97437595606,
+        "errors": 0,
+        "p50_us": 131,
+        "p95_us": 181,
+        "p99_us": 219,
+        "max_us": 3064,
+        "client_elapsed_seconds": 3.001319549,
+        "host_load_before": [
+          2.431640625,
+          3.24853515625,
+          2.78564453125
+        ],
+        "host_load_after": [
+          2.39697265625,
+          3.2275390625,
+          2.78125
+        ],
+        "worker_cpu_seconds": 2.48,
+        "client_cpu_seconds": 2.883149999999972,
+        "worker_cpu_cores": 0.826303217471896,
+        "client_cpu_cores": 0.9606274683282556,
+        "worker_cpu_us_per_request": 28.635
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "proof",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 22329,
+        "rps": 7440.14655251413,
+        "errors": 0,
+        "p50_us": 517,
+        "p95_us": 714,
+        "p99_us": 883,
+        "max_us": 7049,
+        "client_elapsed_seconds": 3.001150561,
+        "host_load_before": [
+          2.39697265625,
+          3.2275390625,
+          2.78125
+        ],
+        "host_load_after": [
+          2.39697265625,
+          3.2275390625,
+          2.78125
+        ],
+        "worker_cpu_seconds": 2.5,
+        "client_cpu_seconds": 7.245059000000026,
+        "worker_cpu_cores": 0.8330138555817692,
+        "client_cpu_cores": 2.414093812602968,
+        "worker_cpu_us_per_request": 111.962
+      },
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "proof",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 20652,
+        "rps": 6881.4509041415795,
+        "errors": 0,
+        "p50_us": 561,
+        "p95_us": 778,
+        "p99_us": 903,
+        "max_us": 3433,
+        "client_elapsed_seconds": 3.00111129,
+        "host_load_before": [
+          2.39697265625,
+          3.2275390625,
+          2.78125
+        ],
+        "host_load_after": [
+          2.525390625,
+          3.24072265625,
+          2.7880859375
+        ],
+        "worker_cpu_seconds": 2.56,
+        "client_cpu_seconds": 7.011431999999985,
+        "worker_cpu_cores": 0.8530173501163298,
+        "client_cpu_cores": 2.3362785723284474,
+        "worker_cpu_us_per_request": 123.959
+      },
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "baseline",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 105821,
+        "rps": 35238.41021438625,
+        "errors": 0,
+        "p50_us": 404,
+        "p95_us": 674,
+        "p99_us": 792,
+        "max_us": 2581,
+        "client_elapsed_seconds": 3.003001536,
+        "host_load_before": [
+          2.525390625,
+          3.24072265625,
+          2.7880859375
+        ],
+        "host_load_after": [
+          2.525390625,
+          3.24072265625,
+          2.7880859375
+        ],
+        "worker_cpu_seconds": 2.26,
+        "client_cpu_seconds": 4.366173000000003,
+        "worker_cpu_cores": 0.7525803676445404,
+        "client_cpu_cores": 1.4539363192653403,
+        "worker_cpu_us_per_request": 21.357
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "baseline",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 87449,
+        "rps": 29124.264424986664,
+        "errors": 0,
+        "p50_us": 514,
+        "p95_us": 771,
+        "p99_us": 906,
+        "max_us": 3429,
+        "client_elapsed_seconds": 3.002616606,
+        "host_load_before": [
+          2.525390625,
+          3.24072265625,
+          2.7880859375
+        ],
+        "host_load_after": [
+          2.6435546875,
+          3.25341796875,
+          2.794921875
+        ],
+        "worker_cpu_seconds": 2.28,
+        "client_cpu_seconds": 4.3018439999999885,
+        "worker_cpu_cores": 0.7593377041357773,
+        "client_cpu_cores": 1.4326983975922194,
+        "worker_cpu_us_per_request": 26.072
+      },
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "challenge",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 127715,
+        "rps": 42527.40611282092,
+        "errors": 0,
+        "p50_us": 346,
+        "p95_us": 534,
+        "p99_us": 624,
+        "max_us": 2581,
+        "client_elapsed_seconds": 3.003122261,
+        "host_load_before": [
+          2.6435546875,
+          3.25341796875,
+          2.794921875
+        ],
+        "host_load_after": [
+          2.75244140625,
+          3.26611328125,
+          2.8017578125
+        ],
+        "worker_cpu_seconds": 2.13,
+        "client_cpu_seconds": 7.628866999999985,
+        "worker_cpu_cores": 0.7092618331465259,
+        "client_cpu_cores": 2.540311827817384,
+        "worker_cpu_us_per_request": 16.678
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "challenge",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 149019,
+        "rps": 49619.119722593285,
+        "errors": 0,
+        "p50_us": 304,
+        "p95_us": 425,
+        "p99_us": 474,
+        "max_us": 1453,
+        "client_elapsed_seconds": 3.003257632,
+        "host_load_before": [
+          2.75244140625,
+          3.26611328125,
+          2.8017578125
+        ],
+        "host_load_after": [
+          2.75244140625,
+          3.26611328125,
+          2.8017578125
+        ],
+        "worker_cpu_seconds": 2.11,
+        "client_cpu_seconds": 8.36237300000002,
+        "worker_cpu_cores": 0.7025704280304648,
+        "client_cpu_cores": 2.784434112777448,
+        "worker_cpu_us_per_request": 14.159
+      },
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "cleared",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 79941,
+        "rps": 26611.694743594177,
+        "errors": 0,
+        "p50_us": 555,
+        "p95_us": 817,
+        "p99_us": 1187,
+        "max_us": 12609,
+        "client_elapsed_seconds": 3.003980046,
+        "host_load_before": [
+          2.75244140625,
+          3.26611328125,
+          2.8017578125
+        ],
+        "host_load_after": [
+          2.7724609375,
+          3.26123046875,
+          2.80322265625
+        ],
+        "worker_cpu_seconds": 2.46,
+        "client_cpu_seconds": 2.9925030000000277,
+        "worker_cpu_cores": 0.8189135621175827,
+        "client_cpu_cores": 0.9961793867388518,
+        "worker_cpu_us_per_request": 30.773
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "cleared",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 72247,
+        "rps": 24063.112585272273,
+        "errors": 0,
+        "p50_us": 628,
+        "p95_us": 890,
+        "p99_us": 1020,
+        "max_us": 3922,
+        "client_elapsed_seconds": 3.002396292,
+        "host_load_before": [
+          2.7724609375,
+          3.26123046875,
+          2.80322265625
+        ],
+        "host_load_after": [
+          2.791015625,
+          3.2568359375,
+          2.8046875
+        ],
+        "worker_cpu_seconds": 2.44,
+        "client_cpu_seconds": 3.048144999999977,
+        "worker_cpu_cores": 0.8126841904586258,
+        "client_cpu_cores": 1.0152373982481513,
+        "worker_cpu_us_per_request": 33.773
+      },
+      {
+        "module": "before",
+        "round": 1,
+        "mode": "proof",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 24523,
+        "rps": 8166.325407417736,
+        "errors": 0,
+        "p50_us": 1894,
+        "p95_us": 2446,
+        "p99_us": 2777,
+        "max_us": 7472,
+        "client_elapsed_seconds": 3.00294181,
+        "host_load_before": [
+          2.791015625,
+          3.2568359375,
+          2.8046875
+        ],
+        "host_load_after": [
+          2.791015625,
+          3.2568359375,
+          2.8046875
+        ],
+        "worker_cpu_seconds": 2.77,
+        "client_cpu_seconds": 8.222403000000014,
+        "worker_cpu_cores": 0.9224287965806438,
+        "client_cpu_cores": 2.7381159943289126,
+        "worker_cpu_us_per_request": 112.955
+      },
+      {
+        "module": "after",
+        "round": 1,
+        "mode": "proof",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 24243,
+        "rps": 8072.525669746725,
+        "errors": 0,
+        "p50_us": 1933,
+        "p95_us": 2364,
+        "p99_us": 2606,
+        "max_us": 8514,
+        "client_elapsed_seconds": 3.003149323,
+        "host_load_before": [
+          2.791015625,
+          3.2568359375,
+          2.8046875
+        ],
+        "host_load_after": [
+          3.12841796875,
+          3.3193359375,
+          2.82763671875
+        ],
+        "worker_cpu_seconds": 2.76,
+        "client_cpu_seconds": 8.215562999999975,
+        "worker_cpu_cores": 0.9190352204141797,
+        "client_cpu_cores": 2.7356491856998395,
+        "worker_cpu_us_per_request": 113.847
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "baseline",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 54965,
+        "rps": 18316.392058612764,
+        "errors": 0,
+        "p50_us": 51,
+        "p95_us": 68,
+        "p99_us": 87,
+        "max_us": 2311,
+        "client_elapsed_seconds": 3.000863916,
+        "host_load_before": [
+          3.12841796875,
+          3.3193359375,
+          2.82763671875
+        ],
+        "host_load_after": [
+          3.12841796875,
+          3.3193359375,
+          2.82763671875
+        ],
+        "worker_cpu_seconds": 1.33,
+        "client_cpu_seconds": 1.3318989999999928,
+        "worker_cpu_cores": 0.4432057025007728,
+        "client_cpu_cores": 0.4438385202669726,
+        "worker_cpu_us_per_request": 24.197
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "baseline",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 57514,
+        "rps": 19166.18838727757,
+        "errors": 0,
+        "p50_us": 49,
+        "p95_us": 63,
+        "p99_us": 99,
+        "max_us": 1089,
+        "client_elapsed_seconds": 3.000805316,
+        "host_load_before": [
+          3.12841796875,
+          3.3193359375,
+          2.82763671875
+        ],
+        "host_load_after": [
+          3.03759765625,
+          3.29736328125,
+          2.82275390625
+        ],
+        "worker_cpu_seconds": 1.34,
+        "client_cpu_seconds": 1.313646000000034,
+        "worker_cpu_cores": 0.4465467962400797,
+        "client_cpu_cores": 0.43776448708478427,
+        "worker_cpu_us_per_request": 23.299
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "challenge",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 57944,
+        "rps": 19309.627549022964,
+        "errors": 0,
+        "p50_us": 48,
+        "p95_us": 63,
+        "p99_us": 100,
+        "max_us": 1112,
+        "client_elapsed_seconds": 3.000782892,
+        "host_load_before": [
+          3.03759765625,
+          3.29736328125,
+          2.82275390625
+        ],
+        "host_load_after": [
+          2.8740234375,
+          3.2587890625,
+          2.8125
+        ],
+        "worker_cpu_seconds": 0.95,
+        "client_cpu_seconds": 1.646207000000004,
+        "worker_cpu_cores": 0.31658404962673986,
+        "client_cpu_cores": 0.5485925037725135,
+        "worker_cpu_us_per_request": 16.395
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "challenge",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 56302,
+        "rps": 18762.591257256383,
+        "errors": 0,
+        "p50_us": 50,
+        "p95_us": 63,
+        "p99_us": 84,
+        "max_us": 2764,
+        "client_elapsed_seconds": 3.000758223,
+        "host_load_before": [
+          2.8740234375,
+          3.2587890625,
+          2.8125
+        ],
+        "host_load_after": [
+          2.8740234375,
+          3.2587890625,
+          2.8125
+        ],
+        "worker_cpu_seconds": 0.99,
+        "client_cpu_seconds": 1.605310999999972,
+        "worker_cpu_cores": 0.32991661654441795,
+        "client_cpu_cores": 0.5349684582035625,
+        "worker_cpu_us_per_request": 17.584
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "cleared",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 43562,
+        "rps": 14517.001965656453,
+        "errors": 0,
+        "p50_us": 63,
+        "p95_us": 89,
+        "p99_us": 134,
+        "max_us": 3770,
+        "client_elapsed_seconds": 3.000757326,
+        "host_load_before": [
+          2.8740234375,
+          3.2587890625,
+          2.8125
+        ],
+        "host_load_after": [
+          2.6435546875,
+          3.20458984375,
+          2.79736328125
+        ],
+        "worker_cpu_seconds": 1.54,
+        "client_cpu_seconds": 1.1404430000000048,
+        "worker_cpu_cores": 0.5132037791449184,
+        "client_cpu_cores": 0.38005172564894196,
+        "worker_cpu_us_per_request": 35.352
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "cleared",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 47846,
+        "rps": 15945.098286545957,
+        "errors": 0,
+        "p50_us": 59,
+        "p95_us": 78,
+        "p99_us": 101,
+        "max_us": 903,
+        "client_elapsed_seconds": 3.000671375,
+        "host_load_before": [
+          2.6435546875,
+          3.20458984375,
+          2.79736328125
+        ],
+        "host_load_after": [
+          2.6435546875,
+          3.20458984375,
+          2.79736328125
+        ],
+        "worker_cpu_seconds": 1.6,
+        "client_cpu_seconds": 1.1388639999999555,
+        "worker_cpu_cores": 0.5332140044825802,
+        "client_cpu_cores": 0.3795363962506409,
+        "worker_cpu_us_per_request": 33.441
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "proof",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 7676,
+        "rps": 2558.2425884982663,
+        "errors": 0,
+        "p50_us": 379,
+        "p95_us": 500,
+        "p99_us": 563,
+        "max_us": 2164,
+        "client_elapsed_seconds": 3.000497308,
+        "host_load_before": [
+          2.6435546875,
+          3.20458984375,
+          2.79736328125
+        ],
+        "host_load_after": [
+          2.51171875,
+          3.16796875,
+          2.78759765625
+        ],
+        "worker_cpu_seconds": 0.81,
+        "client_cpu_seconds": 1.7877169999999865,
+        "worker_cpu_cores": 0.2699552496982277,
+        "client_cpu_cores": 0.5958069001540283,
+        "worker_cpu_us_per_request": 105.524
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "proof",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 7706,
+        "rps": 2568.236628284443,
+        "errors": 0,
+        "p50_us": 378,
+        "p95_us": 495,
+        "p99_us": 569,
+        "max_us": 3372,
+        "client_elapsed_seconds": 3.000502335,
+        "host_load_before": [
+          2.51171875,
+          3.16796875,
+          2.78759765625
+        ],
+        "host_load_after": [
+          2.470703125,
+          3.1484375,
+          2.783203125
+        ],
+        "worker_cpu_seconds": 0.83,
+        "client_cpu_seconds": 1.7782009999999957,
+        "worker_cpu_cores": 0.2766203479725004,
+        "client_cpu_cores": 0.5926344329940325,
+        "worker_cpu_us_per_request": 107.708
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "baseline",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 109639,
+        "rps": 36525.79734906291,
+        "errors": 0,
+        "p50_us": 98,
+        "p95_us": 157,
+        "p99_us": 207,
+        "max_us": 887,
+        "client_elapsed_seconds": 3.001686697,
+        "host_load_before": [
+          2.470703125,
+          3.1484375,
+          2.783203125
+        ],
+        "host_load_after": [
+          2.470703125,
+          3.1484375,
+          2.783203125
+        ],
+        "worker_cpu_seconds": 2.26,
+        "client_cpu_seconds": 3.9738330000000417,
+        "worker_cpu_cores": 0.7529100229743264,
+        "client_cpu_cores": 1.323866679347862,
+        "worker_cpu_us_per_request": 20.613
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "baseline",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 108740,
+        "rps": 36226.82477586381,
+        "errors": 0,
+        "p50_us": 97,
+        "p95_us": 161,
+        "p99_us": 222,
+        "max_us": 4444,
+        "client_elapsed_seconds": 3.001643138,
+        "host_load_before": [
+          2.470703125,
+          3.1484375,
+          2.783203125
+        ],
+        "host_load_after": [
+          2.51318359375,
+          3.1455078125,
+          2.78466796875
+        ],
+        "worker_cpu_seconds": 2.24,
+        "client_cpu_seconds": 3.944503999999995,
+        "worker_cpu_cores": 0.7462579317448497,
+        "client_cpu_cores": 1.3141149092853939,
+        "worker_cpu_us_per_request": 20.6
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "challenge",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 113390,
+        "rps": 37775.788001230314,
+        "errors": 0,
+        "p50_us": 99,
+        "p95_us": 147,
+        "p99_us": 214,
+        "max_us": 3151,
+        "client_elapsed_seconds": 3.001658099,
+        "host_load_before": [
+          2.51318359375,
+          3.1455078125,
+          2.78466796875
+        ],
+        "host_load_after": [
+          2.51318359375,
+          3.1455078125,
+          2.78466796875
+        ],
+        "worker_cpu_seconds": 2.13,
+        "client_cpu_seconds": 5.841577000000001,
+        "worker_cpu_cores": 0.7096078000054729,
+        "client_cpu_cores": 1.9461167152735075,
+        "worker_cpu_us_per_request": 18.785
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "challenge",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 137277,
+        "rps": 45728.64593454393,
+        "errors": 0,
+        "p50_us": 84,
+        "p95_us": 118,
+        "p99_us": 146,
+        "max_us": 3107,
+        "client_elapsed_seconds": 3.00199136,
+        "host_load_before": [
+          2.51318359375,
+          3.1455078125,
+          2.78466796875
+        ],
+        "host_load_after": [
+          2.63232421875,
+          3.16015625,
+          2.79150390625
+        ],
+        "worker_cpu_seconds": 2.09,
+        "client_cpu_seconds": 6.349474000000015,
+        "worker_cpu_cores": 0.6962045353788093,
+        "client_cpu_cores": 2.115087366540594,
+        "worker_cpu_us_per_request": 15.225
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "cleared",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 74518,
+        "rps": 24828.74086280146,
+        "errors": 0,
+        "p50_us": 148,
+        "p95_us": 232,
+        "p99_us": 285,
+        "max_us": 1284,
+        "client_elapsed_seconds": 3.001279864,
+        "host_load_before": [
+          2.63232421875,
+          3.16015625,
+          2.79150390625
+        ],
+        "host_load_after": [
+          2.662109375,
+          3.1572265625,
+          2.79296875
+        ],
+        "worker_cpu_seconds": 2.45,
+        "client_cpu_seconds": 2.9972689999999886,
+        "worker_cpu_cores": 0.8163184078190985,
+        "client_cpu_cores": 0.9986636154634825,
+        "worker_cpu_us_per_request": 32.878
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "cleared",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 76071,
+        "rps": 25345.490621157427,
+        "errors": 0,
+        "p50_us": 145,
+        "p95_us": 225,
+        "p99_us": 273,
+        "max_us": 1379,
+        "client_elapsed_seconds": 3.001362299,
+        "host_load_before": [
+          2.662109375,
+          3.1572265625,
+          2.79296875
+        ],
+        "host_load_after": [
+          2.662109375,
+          3.1572265625,
+          2.79296875
+        ],
+        "worker_cpu_seconds": 2.46,
+        "client_cpu_seconds": 2.9763539999999864,
+        "worker_cpu_cores": 0.8196278072859207,
+        "client_cpu_cores": 0.9916676840352309,
+        "worker_cpu_us_per_request": 32.338
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "proof",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 21150,
+        "rps": 7047.499709195671,
+        "errors": 0,
+        "p50_us": 550,
+        "p95_us": 762,
+        "p99_us": 877,
+        "max_us": 2300,
+        "client_elapsed_seconds": 3.001064331,
+        "host_load_before": [
+          2.662109375,
+          3.1572265625,
+          2.79296875
+        ],
+        "host_load_after": [
+          2.689453125,
+          3.154296875,
+          2.79443359375
+        ],
+        "worker_cpu_seconds": 2.53,
+        "client_cpu_seconds": 7.162192999999974,
+        "worker_cpu_cores": 0.8430342441732882,
+        "client_cpu_cores": 2.3865509732720134,
+        "worker_cpu_us_per_request": 119.622
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "proof",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 21196,
+        "rps": 7062.124096988022,
+        "errors": 0,
+        "p50_us": 545,
+        "p95_us": 789,
+        "p99_us": 919,
+        "max_us": 3796,
+        "client_elapsed_seconds": 3.001363288,
+        "host_load_before": [
+          2.689453125,
+          3.154296875,
+          2.79443359375
+        ],
+        "host_load_after": [
+          2.689453125,
+          3.154296875,
+          2.79443359375
+        ],
+        "worker_cpu_seconds": 2.53,
+        "client_cpu_seconds": 7.236343999999974,
+        "worker_cpu_cores": 0.8429502720031937,
+        "client_cpu_cores": 2.411019028896703,
+        "worker_cpu_us_per_request": 119.362
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "baseline",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 111678,
+        "rps": 37190.47757732615,
+        "errors": 0,
+        "p50_us": 402,
+        "p95_us": 572,
+        "p99_us": 692,
+        "max_us": 2270,
+        "client_elapsed_seconds": 3.002865445,
+        "host_load_before": [
+          2.689453125,
+          3.154296875,
+          2.79443359375
+        ],
+        "host_load_after": [
+          2.87451171875,
+          3.18505859375,
+          2.806640625
+        ],
+        "worker_cpu_seconds": 2.28,
+        "client_cpu_seconds": 4.591030999999987,
+        "worker_cpu_cores": 0.7592747799593798,
+        "client_cpu_cores": 1.5288833562770532,
+        "worker_cpu_us_per_request": 20.416
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "baseline",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 106682,
+        "rps": 35512.43273352978,
+        "errors": 0,
+        "p50_us": 417,
+        "p95_us": 627,
+        "p99_us": 797,
+        "max_us": 3651,
+        "client_elapsed_seconds": 3.00407468,
+        "host_load_before": [
+          2.87451171875,
+          3.18505859375,
+          2.806640625
+        ],
+        "host_load_after": [
+          2.884765625,
+          3.181640625,
+          2.80810546875
+        ],
+        "worker_cpu_seconds": 2.25,
+        "client_cpu_seconds": 4.55959900000002,
+        "worker_cpu_cores": 0.7489827117080857,
+        "client_cpu_cores": 1.5178048103651072,
+        "worker_cpu_us_per_request": 21.091
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "challenge",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 122850,
+        "rps": 40902.61298670288,
+        "errors": 0,
+        "p50_us": 360,
+        "p95_us": 561,
+        "p99_us": 766,
+        "max_us": 1995,
+        "client_elapsed_seconds": 3.003475598,
+        "host_load_before": [
+          2.884765625,
+          3.181640625,
+          2.80810546875
+        ],
+        "host_load_after": [
+          2.884765625,
+          3.181640625,
+          2.80810546875
+        ],
+        "worker_cpu_seconds": 2.08,
+        "client_cpu_seconds": 7.846507000000003,
+        "worker_cpu_cores": 0.6925310135314774,
+        "client_cpu_cores": 2.6124756948999197,
+        "worker_cpu_us_per_request": 16.931
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "challenge",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 117694,
+        "rps": 39187.30749061224,
+        "errors": 0,
+        "p50_us": 367,
+        "p95_us": 599,
+        "p99_us": 813,
+        "max_us": 7562,
+        "client_elapsed_seconds": 3.003370416,
+        "host_load_before": [
+          2.884765625,
+          3.181640625,
+          2.80810546875
+        ],
+        "host_load_after": [
+          2.97412109375,
+          3.1953125,
+          2.81494140625
+        ],
+        "worker_cpu_seconds": 2.12,
+        "client_cpu_seconds": 7.406966000000011,
+        "worker_cpu_cores": 0.7058736373995101,
+        "client_cpu_cores": 2.466217939865334,
+        "worker_cpu_us_per_request": 18.013
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "cleared",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 76755,
+        "rps": 25564.10083628432,
+        "errors": 0,
+        "p50_us": 587,
+        "p95_us": 838,
+        "p99_us": 989,
+        "max_us": 5266,
+        "client_elapsed_seconds": 3.00245256,
+        "host_load_before": [
+          2.97412109375,
+          3.1953125,
+          2.81494140625
+        ],
+        "host_load_after": [
+          2.97412109375,
+          3.1953125,
+          2.81494140625
+        ],
+        "worker_cpu_seconds": 2.46,
+        "client_cpu_seconds": 3.138607000000036,
+        "worker_cpu_cores": 0.8193301811902733,
+        "client_cpu_cores": 1.0453477406484104,
+        "worker_cpu_us_per_request": 32.05
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "cleared",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 73840,
+        "rps": 24593.16397949275,
+        "errors": 0,
+        "p50_us": 622,
+        "p95_us": 834,
+        "p99_us": 1007,
+        "max_us": 3150,
+        "client_elapsed_seconds": 3.002460361,
+        "host_load_before": [
+          2.97412109375,
+          3.1953125,
+          2.81494140625
+        ],
+        "host_load_after": [
+          2.81591796875,
+          3.15869140625,
+          2.80517578125
+        ],
+        "worker_cpu_seconds": 2.45,
+        "client_cpu_seconds": 3.325337999999988,
+        "worker_cpu_cores": 0.8159974505655099,
+        "client_cpu_cores": 1.107537685823919,
+        "worker_cpu_us_per_request": 33.18
+      },
+      {
+        "module": "after",
+        "round": 2,
+        "mode": "proof",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 21755,
+        "rps": 7241.692314515576,
+        "errors": 0,
+        "p50_us": 2144,
+        "p95_us": 2808,
+        "p99_us": 3136,
+        "max_us": 9971,
+        "client_elapsed_seconds": 3.004132053,
+        "host_load_before": [
+          2.81591796875,
+          3.15869140625,
+          2.80517578125
+        ],
+        "host_load_after": [
+          2.8310546875,
+          3.15576171875,
+          2.806640625
+        ],
+        "worker_cpu_seconds": 2.75,
+        "client_cpu_seconds": 8.298892999999964,
+        "worker_cpu_cores": 0.9154058315292041,
+        "client_cpu_cores": 2.762492744522494,
+        "worker_cpu_us_per_request": 126.408
+      },
+      {
+        "module": "before",
+        "round": 2,
+        "mode": "proof",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 23357,
+        "rps": 7777.293091106695,
+        "errors": 0,
+        "p50_us": 1980,
+        "p95_us": 2587,
+        "p99_us": 2869,
+        "max_us": 11373,
+        "client_elapsed_seconds": 3.003230009,
+        "host_load_before": [
+          2.8310546875,
+          3.15576171875,
+          2.806640625
+        ],
+        "host_load_after": [
+          2.8310546875,
+          3.15576171875,
+          2.806640625
+        ],
+        "worker_cpu_seconds": 2.76,
+        "client_cpu_seconds": 8.20901200000003,
+        "worker_cpu_cores": 0.9190105292398201,
+        "client_cpu_cores": 2.7333943705275585,
+        "worker_cpu_us_per_request": 118.166
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "baseline",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 48633,
+        "rps": 16206.806515825374,
+        "errors": 0,
+        "p50_us": 52,
+        "p95_us": 87,
+        "p99_us": 144,
+        "max_us": 3628,
+        "client_elapsed_seconds": 3.000776245,
+        "host_load_before": [
+          2.8310546875,
+          3.15576171875,
+          2.806640625
+        ],
+        "host_load_after": [
+          2.76416015625,
+          3.13623046875,
+          2.80224609375
+        ],
+        "worker_cpu_seconds": 1.27,
+        "client_cpu_seconds": 1.2691670000000386,
+        "worker_cpu_cores": 0.4232238248740202,
+        "client_cpu_cores": 0.4229462300345685,
+        "worker_cpu_us_per_request": 26.114
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "baseline",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 54948,
+        "rps": 18310.555545517615,
+        "errors": 0,
+        "p50_us": 50,
+        "p95_us": 69,
+        "p99_us": 97,
+        "max_us": 906,
+        "client_elapsed_seconds": 3.000892019,
+        "host_load_before": [
+          2.76416015625,
+          3.13623046875,
+          2.80224609375
+        ],
+        "host_load_after": [
+          2.783203125,
+          3.1337890625,
+          2.8037109375
+        ],
+        "worker_cpu_seconds": 1.34,
+        "client_cpu_seconds": 1.330428999999981,
+        "worker_cpu_cores": 0.44653389442734226,
+        "client_cpu_cores": 0.4433445094246761,
+        "worker_cpu_us_per_request": 24.387
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "challenge",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 51494,
+        "rps": 17159.878214090942,
+        "errors": 0,
+        "p50_us": 54,
+        "p95_us": 73,
+        "p99_us": 106,
+        "max_us": 1128,
+        "client_elapsed_seconds": 3.000837148,
+        "host_load_before": [
+          2.783203125,
+          3.1337890625,
+          2.8037109375
+        ],
+        "host_load_after": [
+          2.783203125,
+          3.1337890625,
+          2.8037109375
+        ],
+        "worker_cpu_seconds": 0.99,
+        "client_cpu_seconds": 1.6042229999999904,
+        "worker_cpu_cores": 0.3299079394094464,
+        "client_cpu_cores": 0.5345918225083204,
+        "worker_cpu_us_per_request": 19.226
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "challenge",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 53115,
+        "rps": 17699.76381397178,
+        "errors": 0,
+        "p50_us": 52,
+        "p95_us": 71,
+        "p99_us": 106,
+        "max_us": 2900,
+        "client_elapsed_seconds": 3.000887501,
+        "host_load_before": [
+          2.783203125,
+          3.1337890625,
+          2.8037109375
+        ],
+        "host_load_after": [
+          2.80078125,
+          3.13134765625,
+          2.80517578125
+        ],
+        "worker_cpu_seconds": 0.94,
+        "client_cpu_seconds": 1.642616999999973,
+        "worker_cpu_cores": 0.3132406661985027,
+        "client_cpu_cores": 0.5473770674350824,
+        "worker_cpu_us_per_request": 17.697
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "cleared",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 44774,
+        "rps": 14920.884640195147,
+        "errors": 0,
+        "p50_us": 62,
+        "p95_us": 83,
+        "p99_us": 122,
+        "max_us": 482,
+        "client_elapsed_seconds": 3.000760416,
+        "host_load_before": [
+          2.80078125,
+          3.13134765625,
+          2.80517578125
+        ],
+        "host_load_after": [
+          2.80078125,
+          3.13134765625,
+          2.80517578125
+        ],
+        "worker_cpu_seconds": 1.55,
+        "client_cpu_seconds": 1.1601,
+        "worker_cpu_cores": 0.5165357393197498,
+        "client_cpu_cores": 0.38660200721602694,
+        "worker_cpu_us_per_request": 34.618
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "cleared",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 42804,
+        "rps": 14264.3791442624,
+        "errors": 0,
+        "p50_us": 64,
+        "p95_us": 92,
+        "p99_us": 132,
+        "max_us": 3537,
+        "client_elapsed_seconds": 3.000761517,
+        "host_load_before": [
+          2.80078125,
+          3.13134765625,
+          2.80517578125
+        ],
+        "host_load_after": [
+          2.65625,
+          3.095703125,
+          2.79541015625
+        ],
+        "worker_cpu_seconds": 1.56,
+        "client_cpu_seconds": 1.1373739999999657,
+        "worker_cpu_cores": 0.5198680372173008,
+        "client_cpu_cores": 0.37902845446280287,
+        "worker_cpu_us_per_request": 36.445
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "proof",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 7253,
+        "rps": 2417.3248069809133,
+        "errors": 0,
+        "p50_us": 398,
+        "p95_us": 520,
+        "p99_us": 606,
+        "max_us": 1318,
+        "client_elapsed_seconds": 3.000424262,
+        "host_load_before": [
+          2.65625,
+          3.095703125,
+          2.79541015625
+        ],
+        "host_load_after": [
+          2.603515625,
+          3.0771484375,
+          2.791015625
+        ],
+        "worker_cpu_seconds": 0.86,
+        "client_cpu_seconds": 1.7553120000000604,
+        "worker_cpu_cores": 0.28662613180802227,
+        "client_cpu_cores": 0.585021265902582,
+        "worker_cpu_us_per_request": 118.572
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "proof",
+        "concurrency": 1,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 7588,
+        "rps": 2528.9177857776376,
+        "errors": 0,
+        "p50_us": 386,
+        "p95_us": 508,
+        "p99_us": 592,
+        "max_us": 2329,
+        "client_elapsed_seconds": 3.000492955,
+        "host_load_before": [
+          2.603515625,
+          3.0771484375,
+          2.791015625
+        ],
+        "host_load_after": [
+          2.603515625,
+          3.0771484375,
+          2.791015625
+        ],
+        "worker_cpu_seconds": 0.84,
+        "client_cpu_seconds": 1.7792270000000485,
+        "worker_cpu_cores": 0.27995399842556873,
+        "client_cpu_cores": 0.592978229472313,
+        "worker_cpu_us_per_request": 110.701
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "baseline",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 117046,
+        "rps": 38992.600309417074,
+        "errors": 0,
+        "p50_us": 96,
+        "p95_us": 139,
+        "p99_us": 166,
+        "max_us": 646,
+        "client_elapsed_seconds": 3.001749026,
+        "host_load_before": [
+          2.603515625,
+          3.0771484375,
+          2.791015625
+        ],
+        "host_load_after": [
+          2.7158203125,
+          3.0927734375,
+          2.7978515625
+        ],
+        "worker_cpu_seconds": 2.31,
+        "client_cpu_seconds": 4.198411000000021,
+        "worker_cpu_cores": 0.7695513448964804,
+        "client_cpu_cores": 1.3986549054018154,
+        "worker_cpu_us_per_request": 19.736
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "baseline",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 111178,
+        "rps": 37038.01372175689,
+        "errors": 0,
+        "p50_us": 98,
+        "p95_us": 152,
+        "p99_us": 197,
+        "max_us": 1323,
+        "client_elapsed_seconds": 3.001726843,
+        "host_load_before": [
+          2.7158203125,
+          3.0927734375,
+          2.7978515625
+        ],
+        "host_load_after": [
+          2.7158203125,
+          3.0927734375,
+          2.7978515625
+        ],
+        "worker_cpu_seconds": 2.3,
+        "client_cpu_seconds": 3.934219999999982,
+        "worker_cpu_cores": 0.7662256162194035,
+        "client_cpu_cores": 1.3106522364533426,
+        "worker_cpu_us_per_request": 20.688
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "challenge",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 124456,
+        "rps": 41456.53958321504,
+        "errors": 0,
+        "p50_us": 93,
+        "p95_us": 129,
+        "p99_us": 182,
+        "max_us": 1422,
+        "client_elapsed_seconds": 3.002083658,
+        "host_load_before": [
+          2.7158203125,
+          3.0927734375,
+          2.7978515625
+        ],
+        "host_load_after": [
+          2.73876953125,
+          3.0908203125,
+          2.79931640625
+        ],
+        "worker_cpu_seconds": 2.1,
+        "client_cpu_seconds": 6.240610000000004,
+        "worker_cpu_cores": 0.6995141505813427,
+        "client_cpu_cores": 2.0787595253616358,
+        "worker_cpu_us_per_request": 16.873
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "challenge",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 119982,
+        "rps": 39962.467574997485,
+        "errors": 0,
+        "p50_us": 97,
+        "p95_us": 135,
+        "p99_us": 200,
+        "max_us": 1064,
+        "client_elapsed_seconds": 3.002367153,
+        "host_load_before": [
+          2.73876953125,
+          3.0908203125,
+          2.79931640625
+        ],
+        "host_load_after": [
+          3.0,
+          3.13916015625,
+          2.81689453125
+        ],
+        "worker_cpu_seconds": 2.13,
+        "client_cpu_seconds": 5.951819,
+        "worker_cpu_cores": 0.7094402154885285,
+        "client_cpu_cores": 1.9823754713186474,
+        "worker_cpu_us_per_request": 17.753
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "cleared",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 75999,
+        "rps": 25320.364699128815,
+        "errors": 0,
+        "p50_us": 145,
+        "p95_us": 227,
+        "p99_us": 283,
+        "max_us": 871,
+        "client_elapsed_seconds": 3.001497052,
+        "host_load_before": [
+          3.0,
+          3.13916015625,
+          2.81689453125
+        ],
+        "host_load_after": [
+          3.0,
+          3.13916015625,
+          2.81689453125
+        ],
+        "worker_cpu_seconds": 2.47,
+        "client_cpu_seconds": 3.05314199999998,
+        "worker_cpu_cores": 0.822922680651695,
+        "client_cpu_cores": 1.0172063963766238,
+        "worker_cpu_us_per_request": 32.5
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "cleared",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 77748,
+        "rps": 25903.87362827302,
+        "errors": 0,
+        "p50_us": 143,
+        "p95_us": 214,
+        "p99_us": 263,
+        "max_us": 798,
+        "client_elapsed_seconds": 3.001404389,
+        "host_load_before": [
+          3.0,
+          3.13916015625,
+          2.81689453125
+        ],
+        "host_load_after": [
+          2.919921875,
+          3.1201171875,
+          2.8125
+        ],
+        "worker_cpu_seconds": 2.45,
+        "client_cpu_seconds": 3.076336999999967,
+        "worker_cpu_cores": 0.8162845396572118,
+        "client_cpu_cores": 1.0249658497450698,
+        "worker_cpu_us_per_request": 31.512
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "proof",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 21132,
+        "rps": 7040.746046460253,
+        "errors": 0,
+        "p50_us": 541,
+        "p95_us": 763,
+        "p99_us": 895,
+        "max_us": 1936,
+        "client_elapsed_seconds": 3.001386481,
+        "host_load_before": [
+          2.919921875,
+          3.1201171875,
+          2.8125
+        ],
+        "host_load_after": [
+          2.919921875,
+          3.1201171875,
+          2.8125
+        ],
+        "worker_cpu_seconds": 2.57,
+        "client_cpu_seconds": 6.893031000000008,
+        "worker_cpu_cores": 0.8562709322072141,
+        "client_cpu_cores": 2.2966155953709073,
+        "worker_cpu_us_per_request": 121.617
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "proof",
+        "concurrency": 4,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 20754,
+        "rps": 6914.730618557318,
+        "errors": 0,
+        "p50_us": 553,
+        "p95_us": 783,
+        "p99_us": 934,
+        "max_us": 7651,
+        "client_elapsed_seconds": 3.001418442,
+        "host_load_before": [
+          2.919921875,
+          3.1201171875,
+          2.8125
+        ],
+        "host_load_after": [
+          3.1669921875,
+          3.16796875,
+          2.830078125
+        ],
+        "worker_cpu_seconds": 2.55,
+        "client_cpu_seconds": 7.054577999999992,
+        "worker_cpu_cores": 0.8495982980303151,
+        "client_cpu_cores": 2.3504146910282735,
+        "worker_cpu_us_per_request": 122.868
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "baseline",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 113753,
+        "rps": 37878.69792082954,
+        "errors": 0,
+        "p50_us": 399,
+        "p95_us": 551,
+        "p99_us": 713,
+        "max_us": 2491,
+        "client_elapsed_seconds": 3.003086332,
+        "host_load_before": [
+          3.1669921875,
+          3.16796875,
+          2.830078125
+        ],
+        "host_load_after": [
+          3.31396484375,
+          3.19873046875,
+          2.841796875
+        ],
+        "worker_cpu_seconds": 2.27,
+        "client_cpu_seconds": 4.7475239999999985,
+        "worker_cpu_cores": 0.7558890251710553,
+        "client_cpu_cores": 1.5808816248177038,
+        "worker_cpu_us_per_request": 19.956
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "baseline",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 114517,
+        "rps": 38134.234538210425,
+        "errors": 0,
+        "p50_us": 396,
+        "p95_us": 547,
+        "p99_us": 695,
+        "max_us": 1975,
+        "client_elapsed_seconds": 3.002997212,
+        "host_load_before": [
+          3.31396484375,
+          3.19873046875,
+          2.841796875
+        ],
+        "host_load_after": [
+          3.31396484375,
+          3.19873046875,
+          2.841796875
+        ],
+        "worker_cpu_seconds": 2.27,
+        "client_cpu_seconds": 4.685666000000026,
+        "worker_cpu_cores": 0.7559114577026788,
+        "client_cpu_cores": 1.5603297869462112,
+        "worker_cpu_us_per_request": 19.822
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "challenge",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 124443,
+        "rps": 41434.9034627232,
+        "errors": 0,
+        "p50_us": 355,
+        "p95_us": 528,
+        "p99_us": 730,
+        "max_us": 1822,
+        "client_elapsed_seconds": 3.003337515,
+        "host_load_before": [
+          3.31396484375,
+          3.19873046875,
+          2.841796875
+        ],
+        "host_load_after": [
+          3.369140625,
+          3.21240234375,
+          2.84814453125
+        ],
+        "worker_cpu_seconds": 2.13,
+        "client_cpu_seconds": 7.727711999999997,
+        "worker_cpu_cores": 0.7092109992173157,
+        "client_cpu_cores": 2.5730414784899716,
+        "worker_cpu_us_per_request": 17.116
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "challenge",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 124521,
+        "rps": 41455.974466574145,
+        "errors": 0,
+        "p50_us": 352,
+        "p95_us": 556,
+        "p99_us": 726,
+        "max_us": 2318,
+        "client_elapsed_seconds": 3.00369251,
+        "host_load_before": [
+          3.369140625,
+          3.21240234375,
+          2.84814453125
+        ],
+        "host_load_after": [
+          3.369140625,
+          3.21240234375,
+          2.84814453125
+        ],
+        "worker_cpu_seconds": 2.09,
+        "client_cpu_seconds": 7.887817000000041,
+        "worker_cpu_cores": 0.6958102379128015,
+        "client_cpu_cores": 2.6260401068816597,
+        "worker_cpu_us_per_request": 16.784
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "cleared",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 78096,
+        "rps": 26008.103996790054,
+        "errors": 0,
+        "p50_us": 589,
+        "p95_us": 759,
+        "p99_us": 919,
+        "max_us": 4055,
+        "client_elapsed_seconds": 3.002756372,
+        "host_load_before": [
+          3.369140625,
+          3.21240234375,
+          2.84814453125
+        ],
+        "host_load_after": [
+          3.419921875,
+          3.2255859375,
+          2.8544921875
+        ],
+        "worker_cpu_seconds": 2.45,
+        "client_cpu_seconds": 3.1507409999999823,
+        "worker_cpu_cores": 0.8159170097333491,
+        "client_cpu_cores": 1.0492829286384684,
+        "worker_cpu_us_per_request": 31.372
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "cleared",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 77164,
+        "rps": 25697.92220070148,
+        "errors": 0,
+        "p50_us": 589,
+        "p95_us": 796,
+        "p99_us": 939,
+        "max_us": 3560,
+        "client_elapsed_seconds": 3.002733038,
+        "host_load_before": [
+          3.419921875,
+          3.2255859375,
+          2.8544921875
+        ],
+        "host_load_after": [
+          3.38623046875,
+          3.2216796875,
+          2.85546875
+        ],
+        "worker_cpu_seconds": 2.46,
+        "client_cpu_seconds": 3.1828590000000645,
+        "worker_cpu_cores": 0.8192536495480488,
+        "client_cpu_cores": 1.0599873381084983,
+        "worker_cpu_us_per_request": 31.88
+      },
+      {
+        "module": "before",
+        "round": 3,
+        "mode": "proof",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 23750,
+        "rps": 7908.874600871068,
+        "errors": 0,
+        "p50_us": 1962,
+        "p95_us": 2445,
+        "p99_us": 2847,
+        "max_us": 10306,
+        "client_elapsed_seconds": 3.002955692,
+        "host_load_before": [
+          3.38623046875,
+          3.2216796875,
+          2.85546875
+        ],
+        "host_load_after": [
+          3.38623046875,
+          3.2216796875,
+          2.85546875
+        ],
+        "worker_cpu_seconds": 2.76,
+        "client_cpu_seconds": 8.19455499999998,
+        "worker_cpu_cores": 0.919094479932806,
+        "client_cpu_cores": 2.7288298065238252,
+        "worker_cpu_us_per_request": 116.211
+      },
+      {
+        "module": "after",
+        "round": 3,
+        "mode": "proof",
+        "concurrency": 16,
+        "workers": 1,
+        "worker_cpu_affinities": [
+          [
+            0
+          ]
+        ],
+        "requests": 22559,
+        "rps": 7509.319437742545,
+        "errors": 0,
+        "p50_us": 2058,
+        "p95_us": 2720,
+        "p99_us": 3212,
+        "max_us": 11012,
+        "client_elapsed_seconds": 3.004133755,
+        "host_load_before": [
+          3.38623046875,
+          3.2216796875,
+          2.85546875
+        ],
+        "host_load_after": [
+          3.67578125,
+          3.28466796875,
+          2.8779296875
+        ],
+        "worker_cpu_seconds": 2.75,
+        "client_cpu_seconds": 7.9968809999999735,
+        "worker_cpu_cores": 0.9154053129035862,
+        "client_cpu_cores": 2.6619590378391704,
+        "worker_cpu_us_per_request": 121.903
+      }
+    ],
+    "warmup": {
+      "module": "after",
+      "round": 0,
+      "mode": "proof",
+      "concurrency": 16,
+      "workers": 1,
+      "worker_cpu_affinities": [
+        [
+          0
+        ]
+      ],
+      "requests": 275006,
+      "rps": 9165.036276640198,
+      "errors": 0,
+      "p50_us": 1764,
+      "p95_us": 2116,
+      "p99_us": 2734,
+      "max_us": 7996,
+      "client_elapsed_seconds": 30.005991433,
+      "host_load_before": [
+        2.01416015625,
+        3.3515625,
+        2.77587890625
+      ],
+      "host_load_after": [
+        2.97998046875,
+        3.4619140625,
+        2.83203125
+      ],
+      "worker_cpu_seconds": 27.96,
+      "client_cpu_seconds": 83.260552,
+      "worker_cpu_cores": 0.9318139033143276,
+      "client_cpu_cores": 2.7747975662097835,
+      "worker_cpu_us_per_request": 101.671
+    },
+    "medians_by_concurrency": {
+      "1": {
+        "before": {
+          "baseline": {
+            "rps": 19166.18838727757,
+            "p50_us": 49,
+            "p95_us": 63,
+            "p99_us": 99,
+            "worker_cpu_us_per_request": 23.299,
+            "worker_cpu_cores": 0.4465467962400797,
+            "client_cpu_cores": 0.43776448708478427
+          },
+          "challenge": {
+            "rps": 18762.591257256383,
+            "p50_us": 50,
+            "p95_us": 63,
+            "p99_us": 84,
+            "worker_cpu_us_per_request": 17.584,
+            "worker_cpu_cores": 0.32991661654441795,
+            "client_cpu_cores": 0.5345918225083204
+          },
+          "cleared": {
+            "rps": 15630.243362026004,
+            "p50_us": 60,
+            "p95_us": 78,
+            "p99_us": 104,
+            "worker_cpu_us_per_request": 33.688,
+            "worker_cpu_cores": 0.5265513424447471,
+            "client_cpu_cores": 0.379668845688756
+          },
+          "proof": {
+            "rps": 2568.236628284443,
+            "p50_us": 378,
+            "p95_us": 495,
+            "p99_us": 569,
+            "worker_cpu_us_per_request": 107.708,
+            "worker_cpu_cores": 0.2766203479725004,
+            "client_cpu_cores": 0.5926344329940325
+          }
+        },
+        "after": {
+          "baseline": {
+            "rps": 18316.392058612764,
+            "p50_us": 50,
+            "p95_us": 68,
+            "p99_us": 87,
+            "worker_cpu_us_per_request": 24.197,
+            "worker_cpu_cores": 0.44653389442734226,
+            "client_cpu_cores": 0.4433445094246761
+          },
+          "challenge": {
+            "rps": 19309.627549022964,
+            "p50_us": 48,
+            "p95_us": 63,
+            "p99_us": 100,
+            "worker_cpu_us_per_request": 16.566,
+            "worker_cpu_cores": 0.31658404962673986,
+            "client_cpu_cores": 0.5473770674350824
+          },
+          "cleared": {
+            "rps": 14517.001965656453,
+            "p50_us": 63,
+            "p95_us": 89,
+            "p99_us": 132,
+            "worker_cpu_us_per_request": 35.352,
+            "worker_cpu_cores": 0.5198680372173008,
+            "client_cpu_cores": 0.38005172564894196
+          },
+          "proof": {
+            "rps": 2558.2425884982663,
+            "p50_us": 379,
+            "p95_us": 500,
+            "p99_us": 563,
+            "worker_cpu_us_per_request": 105.524,
+            "worker_cpu_cores": 0.27662051825002065,
+            "client_cpu_cores": 0.5952760238311317
+          }
+        }
+      },
+      "4": {
+        "before": {
+          "baseline": {
+            "rps": 37038.01372175689,
+            "p50_us": 98,
+            "p95_us": 152,
+            "p99_us": 197,
+            "worker_cpu_us_per_request": 20.613,
+            "worker_cpu_cores": 0.7629112887739534,
+            "client_cpu_cores": 1.3143568942611417
+          },
+          "challenge": {
+            "rps": 39962.467574997485,
+            "p50_us": 97,
+            "p95_us": 135,
+            "p99_us": 200,
+            "worker_cpu_us_per_request": 17.753,
+            "worker_cpu_cores": 0.7096078000054729,
+            "client_cpu_cores": 1.9823754713186474
+          },
+          "cleared": {
+            "rps": 25903.87362827302,
+            "p50_us": 143,
+            "p95_us": 214,
+            "p99_us": 263,
+            "worker_cpu_us_per_request": 31.512,
+            "worker_cpu_cores": 0.8163184078190985,
+            "client_cpu_cores": 0.9986636154634825
+          },
+          "proof": {
+            "rps": 6914.730618557318,
+            "p50_us": 553,
+            "p95_us": 778,
+            "p99_us": 903,
+            "worker_cpu_us_per_request": 122.868,
+            "worker_cpu_cores": 0.8495982980303151,
+            "client_cpu_cores": 2.3504146910282735
+          }
+        },
+        "after": {
+          "baseline": {
+            "rps": 38992.600309417074,
+            "p50_us": 96,
+            "p95_us": 139,
+            "p99_us": 166,
+            "worker_cpu_us_per_request": 19.736,
+            "worker_cpu_cores": 0.7628836096310377,
+            "client_cpu_cores": 1.3141149092853939
+          },
+          "challenge": {
+            "rps": 45728.64593454393,
+            "p50_us": 84,
+            "p95_us": 118,
+            "p99_us": 146,
+            "worker_cpu_us_per_request": 15.225,
+            "worker_cpu_cores": 0.6995141505813427,
+            "client_cpu_cores": 2.087171613241007
+          },
+          "cleared": {
+            "rps": 25345.490621157427,
+            "p50_us": 145,
+            "p95_us": 225,
+            "p99_us": 273,
+            "worker_cpu_us_per_request": 32.338,
+            "worker_cpu_cores": 0.822922680651695,
+            "client_cpu_cores": 0.9916676840352309
+          },
+          "proof": {
+            "rps": 7062.124096988022,
+            "p50_us": 541,
+            "p95_us": 763,
+            "p99_us": 895,
+            "worker_cpu_us_per_request": 119.362,
+            "worker_cpu_cores": 0.8429502720031937,
+            "client_cpu_cores": 2.411019028896703
+          }
+        }
+      },
+      "16": {
+        "before": {
+          "baseline": {
+            "rps": 35512.43273352978,
+            "p50_us": 404,
+            "p95_us": 627,
+            "p99_us": 792,
+            "worker_cpu_us_per_request": 21.091,
+            "worker_cpu_cores": 0.7525803676445404,
+            "client_cpu_cores": 1.5178048103651072
+          },
+          "challenge": {
+            "rps": 41434.9034627232,
+            "p50_us": 355,
+            "p95_us": 534,
+            "p99_us": 730,
+            "worker_cpu_us_per_request": 17.116,
+            "worker_cpu_cores": 0.7092109992173157,
+            "client_cpu_cores": 2.540311827817384
+          },
+          "cleared": {
+            "rps": 26008.103996790054,
+            "p50_us": 589,
+            "p95_us": 817,
+            "p99_us": 1007,
+            "worker_cpu_us_per_request": 31.372,
+            "worker_cpu_cores": 0.8159974505655099,
+            "client_cpu_cores": 1.0492829286384684
+          },
+          "proof": {
+            "rps": 7908.874600871068,
+            "p50_us": 1962,
+            "p95_us": 2446,
+            "p99_us": 2847,
+            "worker_cpu_us_per_request": 116.211,
+            "worker_cpu_cores": 0.919094479932806,
+            "client_cpu_cores": 2.7333943705275585
+          }
+        },
+        "after": {
+          "baseline": {
+            "rps": 37190.47757732615,
+            "p50_us": 402,
+            "p95_us": 572,
+            "p99_us": 695,
+            "worker_cpu_us_per_request": 20.416,
+            "worker_cpu_cores": 0.7592747799593798,
+            "client_cpu_cores": 1.5288833562770532
+          },
+          "challenge": {
+            "rps": 41455.974466574145,
+            "p50_us": 352,
+            "p95_us": 556,
+            "p99_us": 726,
+            "worker_cpu_us_per_request": 16.784,
+            "worker_cpu_cores": 0.6958102379128015,
+            "client_cpu_cores": 2.6260401068816597
+          },
+          "cleared": {
+            "rps": 25564.10083628432,
+            "p50_us": 589,
+            "p95_us": 838,
+            "p99_us": 989,
+            "worker_cpu_us_per_request": 32.05,
+            "worker_cpu_cores": 0.8192536495480488,
+            "client_cpu_cores": 1.0453477406484104
+          },
+          "proof": {
+            "rps": 7509.319437742545,
+            "p50_us": 2058,
+            "p95_us": 2720,
+            "p99_us": 3136,
+            "worker_cpu_us_per_request": 121.903,
+            "worker_cpu_cores": 0.9154058315292041,
+            "client_cpu_cores": 2.7356491856998395
+          }
+        }
+      }
+    }
+  },
+  "validation": {
+    "portable_core": 78,
+    "native_core": 79,
+    "native": [
+      {
+        "stage": "mainline-module-build",
+        "exit": 0,
+        "seconds": 56.9
+      },
+      {
+        "stage": "mainline-native",
+        "exit": 0,
+        "seconds": 1.2
+      },
+      {
+        "stage": "mainline-reload",
+        "exit": 0,
+        "seconds": 2.1
+      },
+      {
+        "stage": "mainline-feeds",
+        "exit": 0,
+        "seconds": 4.1
+      },
+      {
+        "stage": "mainline-gzip",
+        "exit": 0,
+        "seconds": 0.2
+      },
+      {
+        "stage": "mainline-redis",
+        "exit": 0,
+        "seconds": 9.8
+      },
+      {
+        "stage": "mainline-http3",
+        "exit": 0,
+        "seconds": 16.0
+      },
+      {
+        "stage": "mainline-browsers",
+        "exit": 0,
+        "seconds": 36.1
+      },
+      {
+        "stage": "stable-module-build",
+        "exit": 0,
+        "seconds": 34.7
+      },
+      {
+        "stage": "stable-native",
+        "exit": 0,
+        "seconds": 1.8
+      },
+      {
+        "stage": "stable-reload",
+        "exit": 0,
+        "seconds": 2.1
+      },
+      {
+        "stage": "stable-feeds",
+        "exit": 0,
+        "seconds": 4.2
+      },
+      {
+        "stage": "stable-gzip",
+        "exit": 0,
+        "seconds": 0.1
+      },
+      {
+        "stage": "stable-redis",
+        "exit": 0,
+        "seconds": 9.8
+      },
+      {
+        "stage": "stable-http3",
+        "exit": 0,
+        "seconds": 16.9
+      },
+      {
+        "stage": "stable-browsers",
+        "exit": 0,
+        "seconds": 35.6
+      }
+    ],
+    "docker_amd64": [
+      {
+        "stage": "amd64-mainline-debian-e2e",
+        "exit": 0,
+        "seconds": 48.6,
+        "log": "/tmp/pow-alloc-20261018/docker/amd64-mainline-debian-e2e.log"
+      },
+      {
+        "stage": "amd64-mainline-debian-cleanup",
+        "exit": 0,
+        "seconds": 0.5,
+        "log": "/tmp/pow-alloc-20261018/docker/amd64-mainline-debian-cleanup.log"
+      },
+      {
+        "stage": "amd64-mainline-debian-reload",
+        "exit": 0,
+        "seconds": 26.4,
+        "log": "/tmp/pow-alloc-20261018/docker/amd64-mainline-debian-reload.log"
+      },
+      {
+        "stage": "amd64-mainline-alpine-e2e",
+        "exit": 0,
+        "seconds": 61.0,
+        "log": "/tmp/pow-alloc-20261018/docker/amd64-mainline-alpine-e2e.log"
+      },
+      {
+        "stage": "amd64-mainline-alpine-cleanup",
+        "exit": 0,
+        "seconds": 0.6,
+        "log": "/tmp/pow-alloc-20261018/docker/amd64-mainline-alpine-cleanup.log"
+      },
+      {
+        "stage": "amd64-stable-debian-e2e",
+        "exit": 0,
+        "seconds": 39.5,
+        "log": "/tmp/pow-alloc-20261018/docker/amd64-stable-debian-e2e.log"
+      },
+      {
+        "stage": "amd64-stable-debian-cleanup",
+        "exit": 0,
+        "seconds": 0.5,
+        "log": "/tmp/pow-alloc-20261018/docker/amd64-stable-debian-cleanup.log"
+      },
+      {
+        "stage": "amd64-stable-debian-reload",
+        "exit": 0,
+        "seconds": 26.8,
+        "log": "/tmp/pow-alloc-20261018/docker/amd64-stable-debian-reload.log"
+      },
+      {
+        "stage": "amd64-stable-alpine-e2e",
+        "exit": 0,
+        "seconds": 44.6,
+        "log": "/tmp/pow-alloc-20261018/docker/amd64-stable-alpine-e2e.log"
+      },
+      {
+        "stage": "amd64-stable-alpine-cleanup",
+        "exit": 0,
+        "seconds": 0.6,
+        "log": "/tmp/pow-alloc-20261018/docker/amd64-stable-alpine-cleanup.log"
+      }
+    ]
+  }
+}

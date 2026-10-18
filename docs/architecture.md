@@ -108,6 +108,11 @@ Key points:
   `http`/`server`/`location` and inherits downward (set once high, override low) —
   the same model as `proxy_*`. `MainConf` holds *only* the global verifier
   registry. `merge_location_conf` resolves every knob with its documented default.
+  Each location owns a small config-pool cache. On its first request in a worker,
+  it stores resolved strings, the pre-serialized policy scope, and the initialized
+  HMAC key schedule. The key is still loaded after fork under worker permissions;
+  later requests reuse that state without the key-cache mutex. Config-pool cleanup
+  releases it with its nginx cycle, including failed reloads.
 - **`merge_location_conf`** is where `pow_gate off;` in a child location overrides a
   parent `pow_gate on;` — plain nginx flag inheritance, no special code.
 - The **challenge page is loaded and cached once** at merge time, not per
@@ -205,7 +210,7 @@ is held to an absolute same-site path; `<`, `>` and `&` are escaped in the JSON)
 
 Protocol v2 commits the client public key, client address policy, User-Agent,
 policy scope and random shared-store issuer into every PoW challenge. The client
-signs redemption with that key. The challenge token is then consumed atomically
+signs redemption with that key. In the default local backend, the challenge token is consumed atomically
 under nginx's process-shared mutex before clearance is minted. The bounded
 2 MiB store is shared by all workers, persists across graceful reloads and never
 evicts live entries. A full restart changes its issuer and invalidates old
@@ -222,7 +227,7 @@ Per-request proofs additionally demonstrate key possession on requests that send
 navigations still use a bearer cookie within its address/UA context. Sharing a
 cookie inside that context remains possible; fetch metadata is not an identity
 signal for arbitrary HTTP clients. See [security.md](security.md) for the exact
-limits, memory budget and Redis cluster proposal.
+limits, memory budget and Redis backend.
 
 ---
 
@@ -299,3 +304,21 @@ Implementation: [`src/verifier.rs`](../src/ngx-http-pow-gate/src/verifier.rs).
 | Per-request proof               | [`src/pow-gate-core/src/proof.rs`](../src/pow-gate-core/src/proof.rs) |
 | PoW challenge/verify math       | [`src/engine/pow.rs`](../src/ngx-http-pow-gate/src/engine/pow.rs)     |
 | Browser solver                  | [`assets/solver.js`](../assets/solver.js)       |
+
+### Clearance decoding and immutable output
+
+The nginx clearance path uses `with_verified_prepared`: the authenticated payload
+borrows JSON strings from a small stack buffer, with a bounded heap fallback for
+larger valid payloads under the 4 KiB token limit. A callback keeps borrowed data
+inside its storage lifetime and receives an already-decoded public key. The
+existing owned API delegates to the same validation and converts the result into
+owned strings. Every request still checks authentication, binding, assurance,
+expiry and any proof; no successful-verification results are cached.
+
+Cached challenge templates and the embedded solver use private request-pool
+`ngx_buf_t` metadata with nginx's read-only `memory` flag. Their body bytes remain
+in the configuration pool or static storage until output finishes. Callers of
+`send_cached_and_finish` must uphold that lifetime and immutability contract.
+Generated protocol responses and replay/no-JS bodies continue to use copied
+request-owned buffers. Large/slow responses, gzip and repeated requests cover
+the shared-body path in the native filter regression.

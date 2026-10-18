@@ -4,12 +4,13 @@
 [![module-amd64](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-amd64.yml/badge.svg)](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-amd64.yml)
 [![module-arm64](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-arm64.yml/badge.svg)](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-arm64.yml)
 
-> **Protocol v2 / 0.4.0:** challenges commit the client key and address/UA/policy
+> **Protocol v2 / 0.5.0:** challenges commit the client key and address/UA/policy
 > context, require key possession and redeem once across nginx workers. Clearances
-> use the same binding and enforce minimum difficulty. The bounded replay store
+> use the same binding and enforce minimum difficulty. The default replay store
 > uses **2 MiB shared per nginx instance**, survives graceful reloads and fails
-> closed at capacity. Full restarts invalidate tokens. V1 cookies/clients are not
-> accepted. See [security and Redis cluster proposal](docs/security.md).
+> closed at capacity. Its full restarts invalidate tokens. Optional [Redis
+> coordination](docs/redis.md) supports multiple instances and survives restarts. V1 cookies/clients are not
+> accepted. See [security](docs/security.md).
 >
 > Builds and CI always cover latest pinned **mainline 1.31.7 and stable 1.30.6**,
 > each on glibc/musl and amd64/arm64. Select a channel using
@@ -330,18 +331,24 @@ troubleshooting) are in [docs/build.md](docs/build.md).
 
 ## Performance
 
-The reviewed v0.4.0 bound-cookie path measured 51.4k requests/second versus
-59.4k for v0.3.0, with p50 latency of 142 µs versus 123 µs. These are medians of
-three short local runs against the same nginx 1.31.7 with four workers and eight
-clients; they are not production capacity estimates. Optional P-256 request
-proofs remain the dominant CPU cost (about 252 µs per core verification).
+The v0.5.0 performance pass reuses resolved configuration and HMAC key schedules,
+borrows request headers, and enables native HMAC/P-256 verification in the module.
+Crawler-range membership uses a sorted interval index. The standalone engine
+keeps its pure Rust default. The content-fingerprinted solver is shared by the
+page and its workers: Chromium and Firefox each fetched one copy instead of nine
+in the local eight-worker comparison (30 KB instead of 268 KB of script bodies).
+Performance tests run only on Linux/amd64. A follow-up reduces normal clearance
+validation allocations from six to one, reuses decoded proof keys and serves
+immutable pages without per-request body copies.
+CPU and HTTP measurements, conditions and limits are recorded in
+[docs/performance.md](docs/performance.md).
 
-Replay state reserves one fixed **2 MiB shared-memory zone per nginx instance**,
+The default local replay backend reserves one **2 MiB shared-memory zone per nginx instance**,
 with 32,768 entries and bounded probing. Cookie checks do not lock that table.
 DNS jobs, resolver threads, verdict caches and verification bodies are bounded.
 Full methodology, memory snapshots and reproduction commands are in
 [docs/performance.md](docs/performance.md). Security guarantees, limitations and
-the proposed Redis cluster backend are in [docs/security.md](docs/security.md).
+the optional Redis cluster backend are in [docs/security.md](docs/security.md).
 A complete initial [global limits include](examples/regular-traffic-limits.conf)
 is available for regular traffic; it starts in dry-run mode for tuning.
 
@@ -349,15 +356,16 @@ is available for regular traffic; it starts in dry-run mode for tuning.
 
 ## What's implemented
 
-The module is functional end to end. Local v0.4.0 validation covers core tests
+The module is functional end to end. Local v0.5.0 validation covers both crypto backends, core tests
 and native glibc/amd64 builds and live HTTP/1.1, HTTP/2 and HTTP/3 suites on
-nginx 1.31.7 and 1.30.6. CI is
-configured for both versions across glibc/musl and amd64/arm64; that full Docker
-matrix was not run locally for this review. See [docs/testing.md](docs/testing.md).
+nginx 1.31.7 and 1.30.6. The allocation follow-up repeats the complete glibc/musl
+Docker matrix on amd64. The earlier performance pass also passed the arm64
+matrix under QEMU for correctness. Performance tests run only on Linux/amd64.
+See [docs/testing.md](docs/testing.md).
 
 | Area | Evidence |
 | ---- | -------- |
-| Crypto engine — PoW, clearance, ECDSA proof, IP-ranges (`src/pow-gate-core`) | **63 tests** green (`cargo test -p pow-gate-core`) |
+| Crypto engine — PoW, clearance, ECDSA proof, IP-ranges (`src/pow-gate-core`) | **78 portable / 79 accelerated tests** green (`cargo test -p pow-gate-core`, with/without `--features native-crypto`) |
 | Browser solver (`assets/solver.js`) | real WebCrypto keygen + 256-bit PoW + proof + IndexedDB |
 | Challenge page (`assets/challenge.html`) | themed (light/dark) + i18n (26 languages) |
 | Directives, config structs, inheritance merge | compiles + `nginx -t` passes |
@@ -431,3 +439,20 @@ idea as a native nginx dynamic module — the tiered challenge model
 (JS-execution proof, scaled proof-of-work, and the no-JS meta-refresh
 fallback) follows the path Anubis charted. If you need a standalone reverse
 proxy rather than an nginx module, go use Anubis.
+
+
+## 0.5.0 operational improvements
+
+- Scoped cookie names avoid collisions after scope changes; upgrades require one
+  fresh solve. `pow_gate_cookie_scope_suffix off` retains a fixed name when needed.
+- Bounded browser retries, script/worker recovery and a clearance confirmation
+  endpoint prevent transient failures and blocked cookies from causing loops.
+- All gate-generated responses explicitly prohibit caching.
+- `$pow_gate_result`, `$pow_gate_reason`, and `$pow_gate_difficulty` expose outcomes
+  through native nginx logs.
+- Crawler feeds expire independently and reject malformed CIDRs. Optional
+  [ASN policies](examples/asn-policy.conf) compose with nginx GeoIP2 variables.
+- Optional [Redis coordination](docs/redis.md) provides cross-instance one-use
+  redemption with nonblocking sockets, explicit epoch fencing and bounded queues.
+- [Alternative PoW experiments](experiments/pow/README.md) measure verifier costs;
+  production retains SHA-256.

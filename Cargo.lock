@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "ngx-http-pow-gate"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "arc-swap",
  "libc",
@@ -890,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "pow-gate-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "base64",
  "criterion",

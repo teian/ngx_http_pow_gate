@@ -79,6 +79,9 @@ never hand-edit artifact names. `<libc>` ∈ {`glibc`, `musl`}, `<arch>` ∈
 
 1. Ensure `main` is green and the module version in `Cargo.toml` is what you
    want to ship (bump it in a normal PR if not).
+   Prepare `docs/releases/v<module-version>.md` in that PR: its first line is a
+   `#` heading with the release title, followed by a blank line and the notes.
+   The release workflow uses this file to publish the title and body.
 2. Tag and push:
 
    ```console
@@ -88,7 +91,8 @@ never hand-edit artifact names. `<libc>` ∈ {`glibc`, `musl`}, `<arch>` ∈
 
 3. `release.yml` runs: if any {libc × arch} build is not byte-identical across
    two independent builds, the release **fails** — nothing is published.
-4. When the release appears, edit it: set the title per
+4. When the release appears, verify its title, notes and artifacts. If no notes
+   file was prepared, edit the release: set the title per
    [Release titles](#release-titles) and write the notes (highlights, artifact
    table, verification commands — see the previous release as the pattern).
 

@@ -116,7 +116,7 @@ cookie, a cleared request reaches the upstream, and a challenged `POST` (and
 ## Solver clock tests (no Docker)
 
 `tests/solver/clock.test.mjs` runs the solver's server-anchored clock and the
-proof-fetch retry against a mocked browser (`node --test tests/solver/`, Node 20+).
+proof-fetch retry against a mocked browser (`node --test tests/solver/clock.test.mjs`, Node 20+).
 It covers device clocks hours off in both directions, the 60 s hint threshold,
 RTT centering, wall-clock jumps, staleness after standby, resync via `X-Pow-Now`,
 and that a skew-rejected GET is retried once while POST is not. The real-browser

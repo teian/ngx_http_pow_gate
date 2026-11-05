@@ -15,7 +15,7 @@ core_tests() {
   ( cd src/pow-gate-core && cargo test )
   if command -v node >/dev/null 2>&1; then
     echo "==> solver clock tests"
-    node --test tests/solver/
+    node --test tests/solver/clock.test.mjs
   else
     echo "==> solver clock tests skipped (node not found)"
   fi

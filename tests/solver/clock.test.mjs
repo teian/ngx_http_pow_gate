@@ -1,5 +1,5 @@
 // Unit tests for the solver's server-anchored clock and proof-fetch retry.
-// Run: node --test tests/solver/
+// Run: node --test tests/solver/clock.test.mjs
 //
 // The region between `@clock-begin` and `@clock-end` in assets/solver.js is
 // evaluated against a mocked browser (controllable Date.now/performance.now,

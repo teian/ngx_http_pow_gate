@@ -2,7 +2,7 @@
 //! with p256 (the same primitive WebCrypto produces in the browser).
 
 use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
-use pow_gate_core::proof::{message, verify};
+use pow_gate_core::proof::{check, message, verify, ProofCheck};
 use rand_core::OsRng;
 
 fn keypair() -> (SigningKey, Vec<u8>) {
@@ -33,6 +33,24 @@ fn stale_timestamp_rejected() {
     assert!(!verify(&pk, "GET", "/dashboard", 1000, &sig, 1100, 5));
     // also reject a future timestamp beyond skew
     assert!(!verify(&pk, "GET", "/dashboard", 1000, &sig, 900, 5));
+}
+
+#[test]
+fn check_separates_skew_from_invalid() {
+    let (sk, pk) = keypair();
+    let sig = sign(&sk, "GET", "/x", 1000);
+    assert_eq!(check(&pk, "GET", "/x", 1000, &sig, 1002, 5), ProofCheck::Valid);
+    // wrong clock either way: reported as skew, whatever the signature is
+    assert_eq!(check(&pk, "GET", "/x", 1000, &sig, 1100, 5), ProofCheck::Skewed);
+    assert_eq!(check(&pk, "GET", "/x", 1000, &sig, 900, 5), ProofCheck::Skewed);
+    assert_eq!(check(&pk, "GET", "/x", 1000, &[0u8; 64], 1100, 5), ProofCheck::Skewed);
+    // in window but forged / tampered / bad config: invalid
+    assert_eq!(check(&pk, "GET", "/y", 1000, &sig, 1002, 5), ProofCheck::Invalid);
+    assert_eq!(check(&pk, "GET", "/x", 1000, &[0u8; 64], 1002, 5), ProofCheck::Invalid);
+    assert_eq!(check(&pk, "GET", "/x", 1000, &sig, 1002, -1), ProofCheck::Invalid);
+    // the boundary itself is still inside the window
+    assert_eq!(check(&pk, "GET", "/x", 1000, &sig, 1005, 5), ProofCheck::Valid);
+    assert_eq!(check(&pk, "GET", "/x", 1000, &sig, 1006, 5), ProofCheck::Skewed);
 }
 
 #[test]

@@ -49,6 +49,18 @@ pub fn message(method: &str, path: &str, ts: i64) -> String {
     format!("{method} {path} {ts}")
 }
 
+/// Outcome of [`check`]. `Skewed` is distinct from `Invalid` so the server can
+/// tell a client with a wrong clock (fixable by resyncing to server time) from
+/// a forged or mismatching proof.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofCheck {
+    Valid,
+    /// The timestamp is outside the allowed window; the signature was not
+    /// examined.
+    Skewed,
+    Invalid,
+}
+
 /// Verify a per-request proof.
 ///
 /// * `pk_sec1` — the client public key from the clearance token (raw SEC1 bytes).
@@ -63,10 +75,32 @@ pub fn verify(
     now: i64,
     skew: i64,
 ) -> bool {
-    if skew < 0 || now.abs_diff(ts) > skew as u64 {
-        return false;
+    check(pk_sec1, method, path, ts, sig, now, skew) == ProofCheck::Valid
+}
+
+/// Like [`verify`], but reports an out-of-window timestamp separately. The
+/// cheap window test still runs first, so a skewed proof costs no signature
+/// verification.
+pub fn check(
+    pk_sec1: &[u8],
+    method: &str,
+    path: &str,
+    ts: i64,
+    sig: &[u8],
+    now: i64,
+    skew: i64,
+) -> ProofCheck {
+    if skew < 0 {
+        return ProofCheck::Invalid;
     }
-    verify_signature(pk_sec1, message(method, path, ts).as_bytes(), sig)
+    if now.abs_diff(ts) > skew as u64 {
+        return ProofCheck::Skewed;
+    }
+    if verify_signature(pk_sec1, message(method, path, ts).as_bytes(), sig) {
+        ProofCheck::Valid
+    } else {
+        ProofCheck::Invalid
+    }
 }
 
 /// Canonical WebCrypto SEC1 encoding; rejects malformed and alternate encodings.

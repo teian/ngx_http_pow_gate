@@ -13,6 +13,7 @@
     #pow-progress  <progress>    — value 0..100 (or set style.width yourself)
     #pow-percent   text element  — numeric percent
     #pow-error     element       — shown if verification fails
+    #pow-clock     element       — optional; device-vs-server clock warning (UTC based)
 
   Template placeholders filled in by the module before serving:
     {{difficulty}}  — configured PoW difficulty
@@ -51,6 +52,7 @@
             preparing: "Preparing…", requesting: "Requesting challenge…",
             verifying: "Verifying…", done: "Done",
             resending: "Resending your request…",
+            clock_skew: "Your device clock is off by about {diff}. Please set date and time to automatic and try again.",
             error_failed: "Verification failed.", retry: "Try again",
             foot: "This takes a few seconds and runs entirely in your browser." },
       de: { title: "Browser wird überprüft…", heading: "Einen Moment…",
@@ -58,6 +60,7 @@
             preparing: "Wird vorbereitet…", requesting: "Anfrage wird gesendet…",
             verifying: "Wird überprüft…", done: "Fertig",
             resending: "Anfrage wird erneut gesendet…",
+            clock_skew: "Die Uhr Ihres Geräts weicht um etwa {diff} ab. Bitte stellen Sie Datum und Uhrzeit auf automatisch und versuchen Sie es erneut.",
             error_failed: "Überprüfung fehlgeschlagen.", retry: "Erneut versuchen",
             foot: "Das dauert nur wenige Sekunden und läuft vollständig in Ihrem Browser." },
       es: { title: "Comprobando tu navegador…", heading: "Un momento…",
@@ -65,6 +68,7 @@
             preparing: "Preparando…", requesting: "Solicitando desafío…",
             verifying: "Verificando…", done: "Listo",
             resending: "Reenviando tu solicitud…",
+            clock_skew: "El reloj de tu dispositivo tiene una diferencia de unos {diff}. Activa la fecha y hora automáticas e inténtalo de nuevo.",
             error_failed: "La verificación ha fallado.", retry: "Inténtalo de nuevo",
             foot: "Esto tarda unos segundos y se ejecuta por completo en tu navegador." },
       fr: { title: "Vérification de votre navigateur…", heading: "Un instant…",
@@ -72,6 +76,7 @@
             preparing: "Préparation…", requesting: "Envoi de la requête…",
             verifying: "Vérification…", done: "Terminé",
             resending: "Renvoi de votre requête…",
+            clock_skew: "L’horloge de votre appareil est décalée d’environ {diff}. Activez la date et l’heure automatiques, puis réessayez.",
             error_failed: "Échec de la vérification.", retry: "Réessayer",
             foot: "Cela prend quelques secondes et s’exécute entièrement dans votre navigateur." },
       nl: { title: "Je browser wordt gecontroleerd…", heading: "Een ogenblik…",
@@ -79,6 +84,7 @@
             preparing: "Voorbereiden…", requesting: "Verzoek wordt verzonden…",
             verifying: "Bezig met verifiëren…", done: "Klaar",
             resending: "Je verzoek wordt opnieuw verzonden…",
+            clock_skew: "De klok van je apparaat loopt ongeveer {diff} af. Zet datum en tijd op automatisch en probeer het opnieuw.",
             error_failed: "Verificatie mislukt.", retry: "Opnieuw proberen",
             foot: "Dit duurt enkele seconden en gebeurt volledig in je browser." },
       pl: { title: "Sprawdzanie przeglądarki…", heading: "Chwileczkę…",
@@ -86,6 +92,7 @@
             preparing: "Przygotowywanie…", requesting: "Wysyłanie żądania…",
             verifying: "Weryfikacja…", done: "Gotowe",
             resending: "Ponowne wysyłanie żądania…",
+            clock_skew: "Zegar urządzenia jest przesunięty o około {diff}. Włącz automatyczną datę i godzinę i spróbuj ponownie.",
             error_failed: "Weryfikacja nie powiodła się.", retry: "Spróbuj ponownie",
             foot: "To zajmie kilka sekund i odbywa się w całości w Twojej przeglądarce." },
       pt: { title: "A verificar o seu navegador…", heading: "Um momento…",
@@ -93,6 +100,7 @@
             preparing: "A preparar…", requesting: "A solicitar desafio…",
             verifying: "A verificar…", done: "Concluído",
             resending: "A reenviar o seu pedido…",
+            clock_skew: "O relógio do seu dispositivo está desfasado cerca de {diff}. Ative a data e hora automáticas e tente novamente.",
             error_failed: "A verificação falhou.", retry: "Tentar novamente",
             foot: "Isto demora alguns segundos e é executado inteiramente no seu navegador." },
       zh: { title: "正在检查您的浏览器…", heading: "请稍候…",
@@ -100,6 +108,7 @@
             preparing: "准备中…", requesting: "正在请求验证…",
             verifying: "正在验证…", done: "完成",
             resending: "正在重新发送您的请求…",
+            clock_skew: "您设备的时钟相差约 {diff}。请将日期和时间设置为自动，然后重试。",
             error_failed: "验证失败。", retry: "重试",
             foot: "这需要几秒钟，并且完全在您的浏览器中运行。" },
       ja: { title: "ブラウザを確認しています…", heading: "少々お待ちください…",
@@ -107,6 +116,7 @@
             preparing: "準備中…", requesting: "チャレンジを要求中…",
             verifying: "確認中…", done: "完了",
             resending: "リクエストを再送信しています…",
+            clock_skew: "お使いの端末の時計が約 {diff} ずれています。日付と時刻を自動設定にして、もう一度お試しください。",
             error_failed: "確認に失敗しました。", retry: "再試行",
             foot: "これには数秒かかり、すべてブラウザ内で実行されます。" },
       ko: { title: "브라우저를 확인하는 중…", heading: "잠시만 기다려 주세요…",
@@ -114,6 +124,7 @@
             preparing: "준비 중…", requesting: "챌린지 요청 중…",
             verifying: "확인 중…", done: "완료",
             resending: "요청을 다시 보내는 중…",
+            clock_skew: "기기 시계가 약 {diff} 어긋나 있습니다. 날짜 및 시간을 자동으로 설정한 후 다시 시도하세요.",
             error_failed: "확인에 실패했습니다.", retry: "다시 시도",
             foot: "몇 초 정도 걸리며 전적으로 브라우저에서 실행됩니다." },
       ru: { title: "Проверка вашего браузера…", heading: "Один момент…",
@@ -121,6 +132,7 @@
             preparing: "Подготовка…", requesting: "Запрос проверки…",
             verifying: "Проверка…", done: "Готово",
             resending: "Повторная отправка запроса…",
+            clock_skew: "Часы вашего устройства отстают или спешат примерно на {diff}. Включите автоматическую установку даты и времени и повторите попытку.",
             error_failed: "Проверка не удалась.", retry: "Повторить",
             foot: "Это займёт несколько секунд и выполняется полностью в вашем браузере." },
       it: { title: "Controllo del browser…", heading: "Un momento…",
@@ -128,6 +140,7 @@
             preparing: "Preparazione…", requesting: "Richiesta della verifica…",
             verifying: "Verifica…", done: "Fatto",
             resending: "Reinvio della richiesta…",
+            clock_skew: "L’orologio del tuo dispositivo è sfasato di circa {diff}. Imposta data e ora automatiche e riprova.",
             error_failed: "Verifica non riuscita.", retry: "Riprova",
             foot: "Bastano pochi secondi e tutto avviene nel tuo browser." },
       tr: { title: "Tarayıcınız kontrol ediliyor…", heading: "Bir saniye…",
@@ -135,6 +148,7 @@
             preparing: "Hazırlanıyor…", requesting: "Doğrulama isteniyor…",
             verifying: "Doğrulanıyor…", done: "Tamam",
             resending: "İsteğiniz yeniden gönderiliyor…",
+            clock_skew: "Cihazınızın saati yaklaşık {diff} yanlış. Tarih ve saati otomatik olarak ayarlayıp tekrar deneyin.",
             error_failed: "Doğrulama başarısız oldu.", retry: "Tekrar dene",
             foot: "Bu birkaç saniye sürer ve tamamen tarayıcınızda çalışır." },
       id: { title: "Memeriksa browser Anda…", heading: "Sebentar…",
@@ -142,6 +156,7 @@
             preparing: "Menyiapkan…", requesting: "Meminta tantangan…",
             verifying: "Memverifikasi…", done: "Selesai",
             resending: "Mengirim ulang permintaan Anda…",
+            clock_skew: "Jam perangkat Anda berselisih sekitar {diff}. Atur tanggal dan waktu ke otomatis, lalu coba lagi.",
             error_failed: "Verifikasi gagal.", retry: "Coba lagi",
             foot: "Ini memerlukan beberapa detik dan berjalan sepenuhnya di browser Anda." },
       vi: { title: "Đang kiểm tra trình duyệt của bạn…", heading: "Chờ một lát…",
@@ -149,6 +164,7 @@
             preparing: "Đang chuẩn bị…", requesting: "Đang yêu cầu xác minh…",
             verifying: "Đang xác minh…", done: "Xong",
             resending: "Đang gửi lại yêu cầu của bạn…",
+            clock_skew: "Đồng hồ thiết bị của bạn lệch khoảng {diff}. Hãy bật ngày giờ tự động rồi thử lại.",
             error_failed: "Xác minh không thành công.", retry: "Thử lại",
             foot: "Việc này mất vài giây và chạy hoàn toàn trong trình duyệt của bạn." },
       hi: { title: "आपके ब्राउज़र की जाँच हो रही है…", heading: "कृपया प्रतीक्षा करें…",
@@ -156,6 +172,7 @@
             preparing: "तैयार हो रहा है…", requesting: "सत्यापन का अनुरोध…",
             verifying: "सत्यापित किया जा रहा है…", done: "पूर्ण",
             resending: "आपका अनुरोध फिर से भेजा जा रहा है…",
+            clock_skew: "आपके डिवाइस की घड़ी लगभग {diff} गलत है। कृपया तारीख और समय को स्वचालित पर सेट करें और फिर प्रयास करें।",
             error_failed: "सत्यापन विफल रहा।", retry: "पुनः प्रयास करें",
             foot: "इसमें कुछ सेकंड लगते हैं और यह पूरी तरह आपके ब्राउज़र में चलता है।" },
       th: { title: "กำลังตรวจสอบเบราว์เซอร์ของคุณ…", heading: "สักครู่…",
@@ -163,6 +180,7 @@
             preparing: "กำลังเตรียม…", requesting: "กำลังขอการตรวจสอบ…",
             verifying: "กำลังตรวจสอบ…", done: "เสร็จสิ้น",
             resending: "กำลังส่งคำขอของคุณอีกครั้ง…",
+            clock_skew: "นาฬิกาของอุปกรณ์คลาดเคลื่อนประมาณ {diff} โปรดตั้งวันที่และเวลาเป็นอัตโนมัติแล้วลองอีกครั้ง",
             error_failed: "การตรวจสอบล้มเหลว", retry: "ลองอีกครั้ง",
             foot: "ใช้เวลาไม่กี่วินาทีและทำงานในเบราว์เซอร์ของคุณทั้งหมด" },
       uk: { title: "Перевірка вашого браузера…", heading: "Один момент…",
@@ -170,6 +188,7 @@
             preparing: "Підготовка…", requesting: "Запит перевірки…",
             verifying: "Перевірка…", done: "Готово",
             resending: "Повторне надсилання запиту…",
+            clock_skew: "Годинник вашого пристрою відхиляється приблизно на {diff}. Увімкніть автоматичне встановлення дати й часу та повторіть спробу.",
             error_failed: "Перевірка не вдалася.", retry: "Повторити",
             foot: "Це займе кілька секунд і виконується повністю у вашому браузері." },
       cs: { title: "Kontrola vašeho prohlížeče…", heading: "Okamžik…",
@@ -177,6 +196,7 @@
             preparing: "Příprava…", requesting: "Požadavek na ověření…",
             verifying: "Ověřování…", done: "Hotovo",
             resending: "Odesílání požadavku znovu…",
+            clock_skew: "Hodiny vašeho zařízení se odchylují asi o {diff}. Nastavte datum a čas na automatické a zkuste to znovu.",
             error_failed: "Ověření se nezdařilo.", retry: "Zkusit znovu",
             foot: "Trvá to několik sekund a probíhá zcela ve vašem prohlížeči." },
       ro: { title: "Se verifică browserul dvs.…", heading: "Un moment…",
@@ -184,6 +204,7 @@
             preparing: "Se pregătește…", requesting: "Se solicită verificarea…",
             verifying: "Se verifică…", done: "Gata",
             resending: "Se retrimite cererea dvs.…",
+            clock_skew: "Ceasul dispozitivului dvs. este decalat cu aproximativ {diff}. Setați data și ora pe automat și încercați din nou.",
             error_failed: "Verificarea a eșuat.", retry: "Încearcă din nou",
             foot: "Durează câteva secunde și se execută complet în browserul dvs." },
       el: { title: "Έλεγχος του προγράμματος περιήγησης…", heading: "Μια στιγμή…",
@@ -191,6 +212,7 @@
             preparing: "Προετοιμασία…", requesting: "Αίτημα επαλήθευσης…",
             verifying: "Επαλήθευση…", done: "Έτοιμο",
             resending: "Επαναποστολή του αιτήματός σας…",
+            clock_skew: "Το ρολόι της συσκευής σας διαφέρει κατά περίπου {diff}. Ορίστε αυτόματη ημερομηνία και ώρα και δοκιμάστε ξανά.",
             error_failed: "Η επαλήθευση απέτυχε.", retry: "Δοκιμάστε ξανά",
             foot: "Διαρκεί λίγα δευτερόλεπτα και εκτελείται εξ ολοκλήρου στο πρόγραμμα περιήγησής σας." },
       hu: { title: "A böngésző ellenőrzése…", heading: "Egy pillanat…",
@@ -198,6 +220,7 @@
             preparing: "Előkészítés…", requesting: "Ellenőrzés kérése…",
             verifying: "Ellenőrzés…", done: "Kész",
             resending: "A kérés újraküldése…",
+            clock_skew: "Az eszköz órája kb. {diff} eltéréssel jár. Állítsa a dátumot és az időt automatikusra, majd próbálja újra.",
             error_failed: "Az ellenőrzés sikertelen.", retry: "Próbálja újra",
             foot: "Ez néhány másodpercet vesz igénybe, és teljes egészében a böngészőjében fut." },
       sv: { title: "Kontrollerar din webbläsare…", heading: "Ett ögonblick…",
@@ -205,6 +228,7 @@
             preparing: "Förbereder…", requesting: "Begär verifiering…",
             verifying: "Verifierar…", done: "Klart",
             resending: "Skickar din begäran igen…",
+            clock_skew: "Enhetens klocka går fel med ungefär {diff}. Ställ in datum och tid på automatiskt och försök igen.",
             error_failed: "Verifieringen misslyckades.", retry: "Försök igen",
             foot: "Det tar några sekunder och körs helt i din webbläsare." },
       da: { title: "Kontrollerer din browser…", heading: "Et øjeblik…",
@@ -212,6 +236,7 @@
             preparing: "Forbereder…", requesting: "Anmoder om verificering…",
             verifying: "Verificerer…", done: "Færdig",
             resending: "Sender din anmodning igen…",
+            clock_skew: "Enhedens ur afviger med ca. {diff}. Indstil dato og klokkeslæt til automatisk, og prøv igen.",
             error_failed: "Verificeringen mislykkedes.", retry: "Prøv igen",
             foot: "Det tager nogle få sekunder og kører udelukkende i din browser." },
       nb: { title: "Kontrollerer nettleseren din…", heading: "Et øyeblikk…",
@@ -219,6 +244,7 @@
             preparing: "Forbereder…", requesting: "Ber om verifisering…",
             verifying: "Verifiserer…", done: "Ferdig",
             resending: "Sender forespørselen din på nytt…",
+            clock_skew: "Enhetens klokke avviker med omtrent {diff}. Sett dato og klokkeslett til automatisk, og prøv igjen.",
             error_failed: "Verifiseringen mislyktes.", retry: "Prøv igjen",
             foot: "Det tar noen få sekunder og kjøres helt i nettleseren din." },
       fi: { title: "Tarkistetaan selaintasi…", heading: "Hetkinen…",
@@ -226,6 +252,7 @@
             preparing: "Valmistellaan…", requesting: "Pyydetään vahvistusta…",
             verifying: "Vahvistetaan…", done: "Valmis",
             resending: "Lähetetään pyyntösi uudelleen…",
+            clock_skew: "Laitteesi kello on noin {diff} pielessä. Aseta päivämäärä ja kellonaika automaattisiksi ja yritä uudelleen.",
             error_failed: "Vahvistus epäonnistui.", retry: "Yritä uudelleen",
             foot: "Tämä kestää muutaman sekunnin ja tapahtuu kokonaan selaimessasi." }
     };
@@ -305,6 +332,8 @@
 
   .meta { display: flex; justify-content: space-between;
           color: var(--muted); font-size: .85rem; margin-top: 10px; }
+  #pow-clock { margin-top: 14px; color: var(--err); font-size: .85rem; line-height: 1.4; }
+  #pow-clock[hidden] { display: none; }
   #pow-error { display: none; margin-top: 16px; color: var(--err); font-size: .9rem; }
   .foot { margin-top: 24px; color: var(--muted); font-size: .8rem; }
   noscript { color: var(--err); }
@@ -339,6 +368,8 @@
       <span id="pow-status" data-i18n="preparing">Preparing…</span>
       <span><span id="pow-percent">0</span>%</span>
     </div>
+
+    <p id="pow-clock" role="alert" hidden></p>
 
     <div id="pow-error">
       <span data-i18n="error_failed">Verification failed.</span>

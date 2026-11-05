@@ -91,6 +91,17 @@ requires rejection of an 8,193-byte body before QUIC stream FIN while accepting
 8,192 bytes. No module changes were required. See [testing.md](testing.md) for
 reproduction and untested transport features.
 
+## Client clocks
+
+No server-side decision trusts a client clock. Challenge, clearance and redemption
+expiry use only the server clock. The one client-supplied time, the `X-Pow-Proof`
+timestamp, is checked against the server clock within `pow_gate_proof_skew`; a
+proof outside that window is rejected without examining its signature, so the
+window is not widened for clients with wrong clocks. Instead the server publishes
+its time (`now` in the challenge, `X-Pow-Now`) and the client stamps proofs with
+it. `X-Pow-Now` and `X-Pow-Reason: proof_skew` are public information and give an
+attacker nothing a `Date` header does not.
+
 ## Operational limits
 
 Navigation cookies remain bearer credentials inside the allowed address/network

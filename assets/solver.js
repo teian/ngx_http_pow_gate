@@ -196,7 +196,11 @@
     var n = $("pow-error"); if (n) n.style.display = "block";
     status(tr("error_failed", "Verification failed. Please retry."));
     var detail = $("pow-error-detail");
-    if (detail) detail.textContent = error && error.message ? error.message : "";
+    var text = error && error.message ? error.message : "";
+    // A badly set device clock is a common, user-fixable cause: say so.
+    var hint = clockHint();
+    if (hint) text = hint + (text ? "\n" + text : "");
+    if (detail) { detail.style.whiteSpace = "pre-line"; detail.textContent = text; }
   };
   var STOPPED = false;
   var stopSolve = null;
@@ -227,7 +231,7 @@
         var after = response && response.headers.get("Retry-After");
         if (after) {
           var seconds = Number(after);
-          delay = Math.min(5000, Math.max(0, Number.isFinite(seconds) ? seconds * 1000 : Date.parse(after) - Date.now()) || delay);
+          delay = Math.min(5000, Math.max(0, Number.isFinite(seconds) ? seconds * 1000 : (Date.parse(after) / 1000 - nowSec()) * 1000) || delay);
         }
         await sleep(delay);
       }
@@ -298,11 +302,98 @@
     return { privateKey: pair.privateKey, pubRaw: pubRaw };
   }
 
+  // @clock-begin (tests/solver/clock.test.mjs extracts this region)
+  // ─────────────────────── server-anchored clock ──────────────────────────────
+  // A device clock that is minutes or hours off must not break the check. The
+  // challenge response carries the server's Unix time; from then on we derive
+  // "now" from it plus the *monotonic* performance.now() delta, so neither a
+  // wrong nor a changing wall clock affects expiry checks or proof timestamps.
+  var clock = null;
+  function syncClock(serverNow, sentMono, recvMono) {
+    if (!Number.isFinite(serverNow) || serverNow <= 0) return;
+    // The server sends whole seconds (the true time is in [now, now+1), hence
+    // +0.5) and stamped the reply ~half an RTT ago on a symmetric path.
+    clock = {
+      server: serverNow + 0.5 + (recvMono - sentMono) / 2000,
+      mono: recvMono,
+      wall: Date.now(),
+    };
+  }
+  // Learn the server time from an `X-Pow-Now` response header.
+  function syncFromHeader(res, sentMono) {
+    var v = res && res.headers && res.headers.get("X-Pow-Now");
+    if (v === null || v === undefined || v === "") return;
+    syncClock(Number(v), sentMono, performance.now());
+    reportClock();
+  }
+  // The anchor goes stale when the monotonic timer pauses (device standby on
+  // some platforms), the wall clock jumps, or the page simply lives long.
+  var CLOCK_MAX_AGE_MS = 120000, CLOCK_DRIFT_MS = 5000;
+  function clockStale() {
+    if (!clock) return false;
+    var mono = performance.now() - clock.mono, wall = Date.now() - clock.wall;
+    return mono > CLOCK_MAX_AGE_MS || Math.abs(wall - mono) > CLOCK_DRIFT_MS;
+  }
+  // Resync via {endpoint}status: always carries X-Pow-Now, never cached, needs
+  // no proof. Uses the unwrapped fetch (no proof-signing recursion); failures
+  // keep the old anchor.
+  var nativeFetch = window.fetch.bind(window);
+  var resyncing = null;
+  function resyncClock() {
+    if (resyncing) return resyncing;
+    resyncing = (async function () {
+      var controller = new AbortController();
+      var timer = setTimeout(function () { controller.abort(); }, 3000);
+      try {
+        var sent = performance.now();
+        var res = await nativeFetch(ENDPOINT + "status", {
+          credentials: "same-origin", cache: "no-store", signal: controller.signal,
+        });
+        syncFromHeader(res, sent);
+      } catch (e) { /* keep the previous anchor */ }
+      finally { clearTimeout(timer); resyncing = null; }
+    })();
+    return resyncing;
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible" && clockStale()) resyncClock();
+  });
+  // Device clock vs. server clock, in seconds (null until the first challenge).
+  function clockSkew() {
+    return clock ? clock.server + (performance.now() - clock.mono) / 1000 - Date.now() / 1000 : null;
+  }
+  // Both sides are compared as Unix time (UTC epoch seconds): Date.now() and the
+  // server's `now` are timezone-independent, so a different timezone or DST
+  // setting can never show up as skew - only a wrongly set clock can.
+  var SKEW_HINT_SECONDS = 60;
+  function clockHint() {
+    var skew = clockSkew();
+    if (skew === null || Math.abs(skew) < SKEW_HINT_SECONDS) return "";
+    var m = Math.round(Math.abs(skew) / 60), diff;
+    if (m < 120) diff = m + " min";
+    else if (m < 2880) diff = Math.round(m / 60) + " h";
+    else diff = Math.round(m / 1440) + " d";
+    return tr("clock_skew", "Your device clock is off by about {diff}. Please set date and time to automatic and try again.")
+      .replace("{diff}", diff);
+  }
+  // Warn as soon as the first challenge reveals a mismatch, not only after a
+  // failure. Optional #pow-clock element; hidden again if the clock is fine.
+  function reportClock() {
+    var hint = clockHint();
+    var n = $("pow-clock");
+    if (n) { n.textContent = hint; n.hidden = !hint; }
+    if (hint) console.warn("[pow] device clock differs from server time by " + Math.round(clockSkew()) + "s (UTC epoch)");
+  }
+  function nowSec() {
+    return clock ? clock.server + (performance.now() - clock.mono) / 1000 : Date.now() / 1000;
+  }
+
   // ───────────────────────── per-request proof (fetch) ────────────────────────
   // WebCrypto ECDSA(P-256, SHA-256) emits raw r‖s (64 bytes) — exactly what the
   // server's p256 verifier expects.
   async function signProof(privateKey, method, path) {
-    var ts = Math.floor(Date.now() / 1000);
+    if (clockStale()) await resyncClock();
+    var ts = Math.floor(nowSec());
     var msg = method + " " + path + " " + ts;
     var sig = new Uint8Array(await crypto.subtle.sign(
       { name: "ECDSA", hash: "SHA-256" }, privateKey, enc.encode(msg)));
@@ -312,19 +403,39 @@
   function installProofFetch(privateKey) {
     var orig = window.fetch;
     window.fetch = async function (input, init) {
+      var self = this;
       init = init || {};
+      var target = null;
       try {
         var url = new URL((typeof input === "string" ? input : input.url), location.href);
         if (url.origin === location.origin) {
-          var method = (init.method || (typeof input !== "string" && input.method) || "GET").toUpperCase();
-          var headers = new Headers(init.headers || (typeof input !== "string" && input.headers) || {});
-          headers.set("X-Pow-Proof", await signProof(privateKey, method, url.pathname));
-          init.headers = headers;
+          target = {
+            method: (init.method || (typeof input !== "string" && input.method) || "GET").toUpperCase(),
+            path: url.pathname,
+          };
         }
-      } catch (e) { /* never block a request because proofing failed */ }
-      return orig.call(this, input, init);
+      } catch (e) { /* not a URL we can inspect: pass through */ }
+      if (!target) return orig.call(self, input, init);
+      var base = new Headers(init.headers || (typeof input !== "string" && input.headers) || {});
+      for (var attempt = 0; ; attempt++) {
+        var next = init;
+        try {
+          var headers = new Headers(base);
+          headers.set("X-Pow-Proof", await signProof(privateKey, target.method, target.path));
+          next = Object.assign({}, init, { headers: headers });
+        } catch (e) { /* never block a request because proofing failed */ }
+        var sent = performance.now();
+        var res = await orig.call(self, input, next);
+        // The server rejected only the proof's timestamp: adopt its clock and,
+        // for requests that are safe to repeat, try once more.
+        if (!res.headers || res.headers.get("X-Pow-Reason") !== "proof_skew") return res;
+        syncFromHeader(res, sent);
+        if (attempt > 0 || (target.method !== "GET" && target.method !== "HEAD")) return res;
+      }
     };
   }
+
+  // @clock-end
 
   // ─────────────────────── captured request (replay) ──────────────────────────
   // A POST — or any other request that carried data — would be lost to the
@@ -409,12 +520,14 @@
   // challenge and try again — NOT dead-end into the error box.
   async function attempt(kp) {
     status(tr("requesting", "Requesting challenge…"));
+    var sentMono = performance.now();
     var ch = await fetchBounded(ENDPOINT + "challenge", {
       credentials: "same-origin", cache: "no-store", readJSON: true,
       headers: { "X-Pow-Key": b64url(kp.pubRaw) },
     }, true);
+    if (ch) { syncClock(Number(ch.now), sentMono, performance.now()); reportClock(); }
     if (!ch || ch.version !== 2 || !Number.isSafeInteger(ch.difficulty) || ch.difficulty < 1 ||
-        !Number.isFinite(ch.exp) || ch.exp <= Date.now() / 1000 ||
+        !Number.isFinite(ch.exp) || ch.exp <= nowSec() ||
         typeof ch.salt !== "string" || typeof ch.token !== "string")
       throw new Error("Invalid or expired challenge response");
 
@@ -464,15 +577,49 @@
   // session storage is available. Normal access after success runs no solver;
   // old markers expire, and a displayed error clears the marker for manual retry.
   function navigationCount(increment) {
+    // sessionStorage can be unavailable (private mode, blocked site data).
+    // window.name survives reloads of the same tab without storage; use it
+    // only if empty or already ours, never clobbering a site's own value.
+    var key = "pow-navigation-recovery", NAME = "pow-nav:";
+    function read() {
+      try { return sessionStorage.getItem(key); } catch (e) { /* fall through */ }
+      return window.name.indexOf(NAME) === 0 ? window.name.slice(NAME.length) : null;
+    }
+    function write(v) {
+      try { if (v === null) sessionStorage.removeItem(key); else sessionStorage.setItem(key, v); return; }
+      catch (e) { /* fall through */ }
+      try {
+        if (v !== null && (window.name === "" || window.name.indexOf(NAME) === 0)) window.name = NAME + v;
+        else if (v === null && window.name.indexOf(NAME) === 0) window.name = "";
+      } catch (e) { /* no persistence available */ }
+    }
     try {
-      var key = "pow-navigation-recovery";
-      var value = JSON.parse(sessionStorage.getItem(key) || "null");
-      if (!value || value.path !== location.href || Date.now() - value.at > 300000)
+      var value = JSON.parse(read() || "null");
+      if (!value || value.path !== location.href || Math.abs(Date.now() - value.at) > 300000)
         value = { path: location.href, at: Date.now(), count: 0 };
-      if (increment) { value.count++; sessionStorage.setItem(key, JSON.stringify(value)); }
-      else if (value.count >= 3) sessionStorage.removeItem(key);
+      if (increment) { value.count++; write(JSON.stringify(value)); }
+      else if (value.count >= 3) write(null);
       return value.count;
     } catch (e) { return 0; }
+  }
+
+  // Ask the server whether it accepts the new clearance. A reply that blames
+  // only the proof timestamp carries the server time: adopt it, ask once more.
+  async function clearanceAccepted(kp) {
+    var path = new URL(ENDPOINT + "status", location.href).pathname;
+    for (var k = 0; k < 2; k++) {
+      var proof = await signProof(kp.privateKey, "GET", path);
+      var sent = performance.now();
+      var res = await fetchBounded(ENDPOINT + "status", {
+        credentials: "same-origin", cache: "no-store",
+        headers: { "X-Pow-Proof": proof },
+      }, true);
+      if (res.ok) return true;
+      var skewed = res.headers.get("X-Pow-Reason") === "proof_skew";
+      syncFromHeader(res, sent);
+      if (!skewed) return false;
+    }
+    return false;
   }
 
   var RETRIES = 3;
@@ -490,11 +637,7 @@
           if (ok) {
             // HttpOnly cookies cannot be inspected from JS. Check server-side
             // acceptance before navigating, so blocked cookies never loop.
-            var ready = await fetchBounded(ENDPOINT + "status", {
-              credentials: "same-origin", cache: "no-store",
-              headers: { "X-Pow-Proof": await signProof(kp.privateKey, "GET", new URL(ENDPOINT + "status", location.href).pathname) },
-            }, true);
-            ok = ready.ok;
+            ok = await clearanceAccepted(kp);
             if (!ok) status("Clearance cookie was not accepted. Retrying…");
           }
         } catch (e) {
@@ -558,7 +701,7 @@
       var workers = [], total = 0, failed = 0, settled = false;
       var lastOutput = performance.now();
       var watchdog = setInterval(function () {
-        if (STOPPED || Date.now() / 1000 >= expires) finish(reject, new Error("Challenge expired"));
+        if (STOPPED || nowSec() >= expires) finish(reject, new Error("Challenge expired"));
         else if (performance.now() - lastOutput > 5000) finish(reject, new Error("Workers stopped responding"));
       }, 250);
 
@@ -600,7 +743,7 @@
     var nonce = 0;
     var batch = PUREJS ? 4096 : 500;
     while (true) {
-      if (STOPPED || Date.now() / 1000 >= expires) throw new Error("Challenge expired");
+      if (STOPPED || nowSec() >= expires) throw new Error("Challenge expired");
       for (var i = 0; i < batch; i++) {
         var h = PUREJS ? sha256Str(salt + nonce) : await sha256Subtle(salt + nonce);
         if (below(h, target)) return nonce;

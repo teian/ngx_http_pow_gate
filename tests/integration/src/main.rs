@@ -39,6 +39,8 @@ struct Challenge {
     exp: i64,
     difficulty: u64,
     token: String,
+    /// Server clock, lets clients with a wrong wall clock stay on server time.
+    now: i64,
 }
 
 fn base() -> String {
@@ -119,6 +121,9 @@ fn main() {
         Err(e) => fail(format!("GET /.pow/challenge failed: {e}")),
     };
     println!("✓ challenge: difficulty={} exp={}", ch.difficulty, ch.exp);
+    if !(0..=130).contains(&(ch.exp - ch.now)) {
+        fail(format!("challenge `now` inconsistent with exp: now={} exp={}", ch.now, ch.exp));
+    }
 
     // 4. solve it
     let mut nonce = 0u64;
@@ -254,6 +259,50 @@ fn main() {
     if !cleared_body.contains("upstream-content") {
         fail("cleared request did NOT reach upstream");
     }
+
+    // 6b. clock hardening: /status always reports the server time; a proof whose
+    // timestamp is far off is reported as skew (not as a generic failure) and
+    // carries the server time so a client with a wrong clock can resync.
+    let status_url = format!("{base}/.pow/status");
+    let proof_for = |ts: i64| {
+        let sig: Signature = sk.sign(format!("GET /.pow/status {ts}").as_bytes());
+        format!("{}.{}", B64.encode(sig.to_bytes()), ts)
+    };
+    let server_now = |r: &ureq::Response| -> i64 {
+        r.header("x-pow-now")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| fail("response lacks a numeric X-Pow-Now"))
+    };
+    match ureq::get(&status_url).set("Cookie", &cookie).set("X-Pow-Proof", &proof_for(now())).set("User-Agent", "e2e-client").call() {
+        Ok(r) if r.status() == 204 => {
+            if (server_now(&r) - now()).abs() > 5 { fail("X-Pow-Now is not the current server time"); }
+            if r.header("cache-control") != Some("no-store") { fail("/status must be no-store"); }
+        }
+        Ok(r) => fail(format!("/status with valid proof: status {}", r.status())),
+        Err(e) => fail(format!("/status with valid proof failed: {e}")),
+    }
+    let far_off = now() - 3600;
+    match ureq::get(&status_url).set("Cookie", &cookie).set("X-Pow-Proof", &proof_for(far_off)).set("User-Agent", "e2e-client").call() {
+        Err(ureq::Error::Status(409, r)) => {
+            if r.header("x-pow-reason") != Some("proof_skew") { fail("skewed proof not reported as proof_skew"); }
+            if (server_now(&r) - now()).abs() > 5 { fail("skew response lacks the current server time"); }
+        }
+        other => fail(format!("skewed proof expected 409, got {:?}", other.map(|r| r.status()))),
+    }
+    // in the window but a wrong signature: invalid, NOT skew
+    let forged = format!("{}.{}", B64.encode([0u8; 64]), now());
+    match ureq::get(&status_url).set("Cookie", &cookie).set("X-Pow-Proof", &forged).set("User-Agent", "e2e-client").call() {
+        Err(ureq::Error::Status(409, r)) => {
+            if r.header("x-pow-reason").is_some() { fail("forged proof must not be reported as skew"); }
+        }
+        other => fail(format!("forged proof expected 409, got {:?}", other.map(|r| r.status()))),
+    }
+    // no cookie at all: still tells the time (for the solver's resync)
+    match ureq::get(&status_url).set("User-Agent", "e2e-client").call() {
+        Err(ureq::Error::Status(409, r)) if r.header("x-pow-now").is_some() => {}
+        other => fail(format!("cookie-less /status expected 409 with X-Pow-Now, got {:?}", other.map(|r| r.status()))),
+    }
+    println!("✓ clock hardening: X-Pow-Now on /status, proof_skew reported only for window violations");
 
     println!("✓ cleared request reached upstream");
 

@@ -61,7 +61,14 @@ pub fn issue_challenge(r: &mut Request, cfg: &Cfg, required: Assurance) -> Statu
         CHALLENGE_GRACE,
     );
     crate::observability::record(r, "issued", "pow", difficulty);
-    let body = serde_json::to_vec(&challenge).unwrap_or_default();
+    // `now` is the server's clock. Clients with a wrong wall clock use it to
+    // judge `exp` and to stamp per-request proofs on server time. It is not
+    // covered by the HMAC and carries no authority.
+    let mut value = serde_json::to_value(&challenge).unwrap_or_default();
+    if let Some(map) = value.as_object_mut() {
+        map.insert("now".into(), runtime::now().into());
+    }
+    let body = serde_json::to_vec(&value).unwrap_or_default();
     response::send_and_finish_with_headers(
         r,
         HTTPStatus::OK,
@@ -156,10 +163,18 @@ extern "C" fn verify_body(r: *mut ngx_http_request_t) {
         token: sub.token,
         difficulty: sub.difficulty,
     };
-    if pow::verify_solution(
+    let verdict = pow::verify_solution(
         &cfg.key, &challenge, sub.nonce, &pk, &context, difficulty, now,
-    ) != pow::Verdict::Ok
-    {
+    );
+    if verdict != pow::Verdict::Ok {
+        // Distinct reasons make clock problems (expired on arrival) visible
+        // in `$pow_gate_reason` instead of one opaque "invalid_submission".
+        let reason = match verdict {
+            pow::Verdict::Expired => "challenge_expired",
+            pow::Verdict::BadToken => "bad_token",
+            _ => "wrong_solution",
+        };
+        crate::observability::record(req, "rejected", reason, cfg.difficulty);
         return finalize_status(req, HTTPStatus::BAD_REQUEST);
     }
     let Some(signature) = codec::unb64url(&sub.signature) else {

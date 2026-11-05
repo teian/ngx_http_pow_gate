@@ -113,6 +113,18 @@ try {
    await scenario('silent workers fall back after watchdog', async page => {
     await page.addInitScript(() => { window.Worker = class { postMessage() {} terminate() {} }; });
    });
+   // Wrong device clocks must neither break the check nor go unreported.
+   for (const [label, offsetMs] of [['3 h ahead', 3 * 3600e3], ['3 h behind', -3 * 3600e3], ['40 days ahead', 40 * 86400e3]]) {
+    const warnings = [];
+    await scenario(`device clock ${label} still clears`, async page => {
+     page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
+     await page.addInitScript(offset => { const real = Date.now.bind(Date); Date.now = () => real() + offset; }, offsetMs);
+    });
+    assert(warnings.some(w => /device clock differs from server time/.test(w)), `clock skew reported for ${label}: ${warnings}`);
+   }
+   await scenario('correct device clock raises no clock warning', async page => {
+    page.on('console', m => assert(!/device clock differs/.test(m.text()), m.text()));
+   });
    await scenario('old fixed-name cookie cannot shadow clearance', async (_page, context) => {
     await context.addCookies([{ name: 'pow_clearance', value: 'old-invalid-token', url: base }]);
    });

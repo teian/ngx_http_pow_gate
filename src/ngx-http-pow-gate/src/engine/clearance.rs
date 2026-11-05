@@ -1,18 +1,32 @@
 //! Clearance validation — read the cookie + optional per-request proof off the
 //! request and verify them with [`pow_gate_core`].
 
+use std::cell::Cell;
+
 use ngx::http::Request;
 use pow_gate_core::{clearance, codec, proof};
 
 use crate::runtime::{self, Cfg};
 
+/// Result of [`check_clearance`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Clearance {
+    Valid,
+    /// The cookie is fine but the proof's timestamp is outside
+    /// `pow_gate_proof_skew` - almost always a client with a wrong clock.
+    ProofSkewed,
+    Invalid,
+}
+
 /// Validate the clearance cookie and the per-request proof.
 ///
-/// `true` iff the cookie's HMAC verifies and it is unexpired, *and* the proof
-/// requirement is met:
+/// [`Clearance::Valid`] iff the cookie's HMAC verifies and it is unexpired, *and*
+/// the proof requirement is met:
 ///
 /// * A present `X-Pow-Proof` header is always verified against the cookie-bound
-///   key within `proof_skew`; a present-but-bad proof fails closed.
+///   key within `proof_skew`; a present-but-bad proof fails closed. A proof
+///   rejected only for its timestamp yields [`Clearance::ProofSkewed`] so the
+///   response can carry the server time for the client to resync.
 /// * An absent proof is accepted unless `pow_gate_require_proof` is on (off by
 ///   default — enabling it needs page-side integration to sign the proofs)
 ///   *and* the request is one that could have carried the header in the first
@@ -20,10 +34,26 @@ use crate::runtime::{self, Cfg};
 ///   tag-driven subresource loads (`<script>`, `<img>`, `<link>`, fonts, …)
 ///   cannot attach custom headers, so they pass on the cookie alone; demanding
 ///   a proof of them would challenge every asset on a gated page.
-pub fn has_valid_clearance(
+pub fn check_clearance(
     r: &Request,
     cfg: &Cfg,
     required: pow_gate_core::context::Assurance,
+) -> Clearance {
+    let skewed = Cell::new(false);
+    if verified(r, cfg, required, &skewed) {
+        Clearance::Valid
+    } else if skewed.get() {
+        Clearance::ProofSkewed
+    } else {
+        Clearance::Invalid
+    }
+}
+
+fn verified(
+    r: &Request,
+    cfg: &Cfg,
+    required: pow_gate_core::context::Assurance,
+    skewed: &Cell<bool>,
 ) -> bool {
     // No usable HMAC key -> never trust a clearance cookie (an empty/known key
     // would let anyone forge one). Fail closed: the client is challenged.
@@ -56,7 +86,7 @@ pub fn has_valid_clearance(
                     None => return false,
                 };
                 let (method, path) = runtime::method_and_path(r);
-                proof::verify(
+                match proof::check(
                     cleared.public_key(),
                     method,
                     path,
@@ -64,7 +94,14 @@ pub fn has_valid_clearance(
                     &sig,
                     now,
                     cfg.proof_skew,
-                )
+                ) {
+                    proof::ProofCheck::Valid => true,
+                    proof::ProofCheck::Skewed => {
+                        skewed.set(true);
+                        false
+                    }
+                    proof::ProofCheck::Invalid => false,
+                }
             }
             // No proof header. Accept on the cookie alone unless this request could
             // have carried one (fetch/XHR) and the requirement is on.

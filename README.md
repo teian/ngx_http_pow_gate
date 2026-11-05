@@ -168,7 +168,8 @@ Two tokens, two jobs:
   *did the work*. HMAC-signed with your server key; bound to a client keypair.
   Long-lived on purpose: a human solves once, then browses for the day without
   being re-challenged.
-- **Per-request proof** (`pow_gate_proof_skew`, e.g. 5s) — a DPoP-style signature
+- **Per-request proof** (`pow_gate_proof_skew`, e.g. 5s; stamped with server time,
+  so wrong device clocks do not break it) — a DPoP-style signature
   proving possession of the clearance key for a recent request. Address/UA
   binding restricts cookie transfer; the signature adds key possession on
   requests carrying a proof. Demanded only

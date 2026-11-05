@@ -32,10 +32,18 @@ Response: `200 application/json`, `Cache-Control: no-store`:
   "version": 2,
   "salt": "random-16-byte-hex",
   "exp": 1792302000,
+  "now": 1792301880,
   "difficulty": 500000,
   "token": "base64url-authentication-tag"
 }
 ```
+
+`now` is the server's Unix time. It is informational and not covered by the
+HMAC. The bundled solver derives its clock from it plus the monotonic
+`performance.now()`, so a wrong device clock affects neither the `exp` checks
+nor the timestamps of `X-Pow-Proof`. Custom clients must do the same: judging
+`exp` or stamping proofs with a skewed local clock fails with 400 or a rejected
+proof. All server-side time checks use the server clock only.
 
 The HMAC covers the domain-separated JSON tuple:
 `("pow-gate-challenge-v2", salt, exp, difficulty, base64url(public_key), context)`.
@@ -76,7 +84,7 @@ that challenge again. Invalid submissions never consume a valid challenge.
 | Outcome | Status |
 | --- | --- |
 | Accepted; clearance in Set-Cookie | 204 |
-| Invalid key, signature, binding, token, solution or expiry | 400 |
+| Invalid key, signature, binding, token, solution or expiry (reason logged in `$pow_gate_reason`) | 400 |
 | Challenge already redeemed | 409 |
 | Body exceeds 8192 bytes (declared or streamed) | 413 |
 | Signing key/store unavailable or replay table saturated | 503 |
@@ -192,6 +200,31 @@ request proof satisfy the endpoint's policy, or 409 otherwise. It never consumes
 a challenge or mints a cookie. The solver signs this request when confirming a
 PoW clearance. All protocol responses, including rejections,
 carry `Cache-Control: no-store`.
+
+### Server time and clock skew
+
+Every `status` response (any outcome, with or without cookie or proof) carries
+`X-Pow-Now: <unix-seconds>`, the server's clock. The solver uses it to resync
+(see below), so it needs no credentials.
+
+A request whose proof is otherwise acceptable but whose timestamp lies outside
+`pow_gate_proof_skew` is a *clock* problem, not a forgery. Such responses carry
+`X-Pow-Reason: proof_skew` in addition to `X-Pow-Now`: on `status` as the 409,
+and on any gated response (the challenge that follows a rejected cookie+proof)
+as well. The signature of a skewed proof is not examined, so the hint costs no
+extra cryptography. A malformed or wrongly signed proof inside the window is
+`invalid` and carries no `X-Pow-Reason`.
+
+Clients should:
+
+1. derive "now" from the server (`now` of the challenge, `X-Pow-Now`) plus the
+   monotonic timer, never from the wall clock alone;
+2. resync after standby, wall-clock jumps and after about two minutes;
+3. on `X-Pow-Reason: proof_skew`, adopt `X-Pow-Now` and repeat idempotent
+   requests (GET/HEAD) once with a fresh proof.
+
+The bundled solver does all three. `X-Pow-Now` has one-second resolution;
+account for ±0.5 s plus half the round-trip time.
 
 Protocol v2 token formats are unchanged in 0.5.0. Scoped cookie names require one
 fresh solve on upgrade. With Redis enabled, the namespace/epoch identify the

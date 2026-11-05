@@ -27,7 +27,7 @@ use ngx::core::Status;
 use ngx::ffi::{ngx_conf_t, ngx_http_request_t, ngx_pnalloc, ngx_str_t, ngx_uint_t};
 use ngx::http::{HTTPStatus, Request};
 
-use crate::response::{as_bytes, as_str, send_and_finish};
+use crate::response::{as_bytes, as_str};
 use crate::runtime::Cfg;
 
 // Assets live at the repo root; this crate is two levels down (crates/<name>/),
@@ -257,21 +257,47 @@ pub fn route_internal(
             Some(serve_solver(r))
         }
         "verify" => Some(crate::engine::pow::verify_solution(r)),
-        "status" => Some(
-            if crate::engine::clearance::has_valid_clearance(r, cfg, required) {
-                send_and_finish(r, HTTPStatus::NO_CONTENT, "text/plain", &[], None)
-            } else {
-                send_and_finish(
-                    r,
-                    HTTPStatus::CONFLICT,
-                    "text/plain",
-                    b"clearance missing or invalid\n",
-                    None,
-                )
-            },
-        ),
+        "status" => Some(status(r, cfg, required)),
         "pass" => Some(crate::engine::nojs::pass(r, cfg, nojs_template, required)),
         _ => None,
+    }
+}
+
+/// `GET {endpoint}status`: is the presented clearance accepted? Always carries
+/// the server time (`X-Pow-Now`) and is never cached, so a client can also use
+/// it, with or without a proof, to resync its clock.
+fn status(r: &mut Request, cfg: &Cfg, required: pow_gate_core::context::Assurance) -> Status {
+    use crate::engine::clearance::{check_clearance, Clearance};
+    let now = crate::runtime::now().to_string();
+    let base = [("Cache-Control", "no-store"), ("X-Pow-Now", now.as_str())];
+    match check_clearance(r, cfg, required) {
+        Clearance::Valid => {
+            crate::response::send_and_finish_with_headers(
+                r,
+                HTTPStatus::NO_CONTENT,
+                "text/plain",
+                &[],
+                &base,
+            )
+        }
+        Clearance::ProofSkewed => {
+            crate::observability::record(r, "rejected", "proof_skew", 0);
+            let headers = [base[0], base[1], ("X-Pow-Reason", "proof_skew")];
+            crate::response::send_and_finish_with_headers(
+                r,
+                HTTPStatus::CONFLICT,
+                "text/plain",
+                b"proof timestamp outside window\n",
+                &headers,
+            )
+        }
+        Clearance::Invalid => crate::response::send_and_finish_with_headers(
+            r,
+            HTTPStatus::CONFLICT,
+            "text/plain",
+            b"clearance missing or invalid\n",
+            &base,
+        ),
     }
 }
 

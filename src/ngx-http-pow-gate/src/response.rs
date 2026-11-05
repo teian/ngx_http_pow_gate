@@ -20,6 +20,17 @@ pub fn no_store(r: &mut Request) {
     }
 }
 
+/// Tell the client the server's clock (`X-Pow-Now`, Unix seconds) and, for a
+/// proof rejected only because of its timestamp, why (`X-Pow-Reason:
+/// proof_skew`). Lets a client with a wrong clock resync and retry. Harmless
+/// to expose: it is public time information.
+pub fn clock_headers(r: &mut Request, proof_skew: bool) {
+    let _ = r.add_header_out("X-Pow-Now", &crate::runtime::now().to_string());
+    if proof_skew {
+        let _ = r.add_header_out("X-Pow-Reason", "proof_skew");
+    }
+}
+
 /// Borrow an `ngx_str_t` as `&str` (nginx strings are not NUL-terminated).
 ///
 /// # Safety

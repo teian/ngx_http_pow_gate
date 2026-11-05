@@ -32,7 +32,7 @@ use pow_gate_core::{context::Assurance, Decision};
 
 use crate::challenge::{route_internal, serve_challenge_page, serve_nojs_page};
 use crate::config::LocationConf;
-use crate::engine::clearance::has_valid_clearance;
+use crate::engine::clearance::{check_clearance, Clearance};
 use crate::observability::record;
 use crate::replay;
 use crate::response::{as_bytes, as_str};
@@ -113,11 +113,18 @@ ngx::http_request_handler!(pow_gate_access, |request: &mut Request| {
 
     // 3. challenge: cleared clients pass; everyone else gets the page the
     // decision picked — JS PoW by default, meta-refresh for challenge:nojs.
-    if has_valid_clearance(request, cfg, required) {
+    let clearance = check_clearance(request, cfg, required);
+    if clearance == Clearance::Valid {
         record(request, "bypass", "clearance", difficulty);
         return Status::NGX_DECLINED;
     }
     crate::response::no_store(request);
+    if clearance == Clearance::ProofSkewed {
+        // Valid cookie, proof timestamp off: the client's clock is wrong. Say
+        // so (and give it the server time) on whatever response follows.
+        record(request, "challenge", "proof_skew", difficulty);
+        crate::response::clock_headers(request, true);
+    }
     if let Decision::ChallengeNoJs { delay } = decision {
         if crate::cluster::enabled() && !crate::cluster::available() {
             record(request, "error", "issuer_unavailable", 0);

@@ -262,7 +262,9 @@ How it works:
 **Add a language:** add a two-letter key with the same string set to the `I18N`
 object in the page's `<head>` script (keep the diacritics correct). Use the same
 keys (`title`, `heading`, `sub`, `preparing`, `requesting`, `verifying`, `done`,
-`error_failed`, `retry`, `foot`) so the solver picks them up. In a *custom* page,
+`error_failed`, `clock_skew`, `retry`, `foot`) so the solver picks them up.
+`clock_skew` is shown below a failed check when the device clock differs from the
+server by 60 s or more; `{diff}` is replaced with e.g. `5 min` or `3 h`. In a *custom* page,
 mirror this structure — set `window.__POW_I18N__` with at least the `preparing` /
 `requesting` / `verifying` / `done` keys if you want localized solver status.
 
@@ -342,6 +344,12 @@ fallback to the yielding in-page solver. Leaving the page cancels active workers
 The embedded page also retries failed solver script loads, at most three times.
 Custom pages may adopt the embedded bootstrap; ordinary `defer` script tags
 alone cannot recover an initial script-load failure.
+
+An optional `#pow-clock` element (use the `hidden` attribute initially) receives
+the localized `clock_skew` warning as soon as the first challenge shows that the
+device clock differs from the server by 60 s or more, even before any failure.
+The comparison uses Unix/UTC time on both sides (`Date.now()` vs. the challenge's
+`now`), so timezone or DST settings never trigger it, only a wrongly set clock.
 
 An optional `#pow-error-detail` element shows the final failure using textContent.
 The solver confirms server-side cookie acceptance before replaying a captured

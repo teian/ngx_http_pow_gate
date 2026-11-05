@@ -274,8 +274,11 @@ nginx time syntax: `30m`, `12h`, `72h`, `90s`.
 
 The validity window for the per-request proof timestamp. Must absorb realistic
 clock skew and network delay between client and server, but small enough that a
-captured proof can't be meaningfully replayed. `5s` is a sane start; raise it if
-you see legitimate failures from clients with bad clocks.
+captured proof can't be meaningfully replayed. `5s` is a sane start. The bundled
+solver stamps proofs with the server's time (see
+[protocol](protocol.md#server-time-and-clock-skew)), so wrong *device* clocks do
+not need a larger window; keep it at `5s`-`10s`. Only raise it if a custom client
+cannot use `X-Pow-Now`, and check `$pow_gate_reason` for `proof_skew` first.
 
 ### `pow_gate_require_proof on | off;`
 
@@ -758,7 +761,12 @@ access_log /var/log/nginx/pow.log pow;
 as `trusted`, `allow`, `verified_range`, `verified_dns`, `verifier_unconfirmed`,
 `feed_stale`, `clearance`, `policy`, `pow`, `nojs`, `invalid_key`,
 `invalid_submission`, `body_too_large`, `replay`, `expired`, `issuer_unavailable`,
-or `redemption_unavailable`. `$pow_gate_cookie_name` exposes the effective scoped cookie name, including when
+or `redemption_unavailable`. Failures have distinct reasons so clock problems are
+diagnosable: `challenge_expired` (a `/verify` whose challenge had expired on arrival),
+`bad_token`, `wrong_solution`, and `proof_skew` (valid clearance, but the proof
+timestamp is outside `pow_gate_proof_skew`; result `challenge` or, on `status`,
+`rejected`). A steady stream of `proof_skew` or `challenge_expired` points at
+clients with wrong clocks or at a custom client that does not use the server time. `$pow_gate_cookie_name` exposes the effective scoped cookie name, including when
 the gate is off in a helper location. `$pow_gate_difficulty` is the effective hash budget,
 or 0 when not applicable. Variables are evaluated from request-local state and
 are diagnostic output, not policy inputs. Successful issuance/acceptance also

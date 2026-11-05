@@ -113,11 +113,22 @@ cookie, a cleared request reaches the upstream, and a challenged `POST` (and
 
 ---
 
+## Solver clock tests (no Docker)
+
+`tests/solver/clock.test.mjs` runs the solver's server-anchored clock and the
+proof-fetch retry against a mocked browser (`node --test tests/solver/`, Node 20+).
+It covers device clocks hours off in both directions, the 60 s hint threshold,
+RTT centering, wall-clock jumps, staleness after standby, resync via `X-Pow-Now`,
+and that a skew-rejected GET is retried once while POST is not. The real-browser
+suite (`tests/browser`) additionally clears the challenge with the device clock
+3 h ahead, 3 h behind and 40 days ahead, and checks the warning is reported only
+then.
+
 ## One command
 
 ```bash
 ./scripts/test.sh          # core tests + full Docker pipeline
-./scripts/test.sh core     # just the engine tests (fast)
+./scripts/test.sh core     # engine tests + solver clock tests (fast, no Docker)
 ./scripts/test.sh docker   # build + smoke + e2e
 ```
 

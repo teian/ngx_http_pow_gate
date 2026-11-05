@@ -15,6 +15,8 @@ jobs:
         run: python3 tests/build/test_nginx_versions.py
       - name: core unit tests
         run: cd src/pow-gate-core && cargo test --locked || cargo test
+      - name: solver clock tests
+        run: node --test tests/solver/
       - name: accelerated crypto compatibility tests
         run: cargo test --locked -p pow-gate-core --features native-crypto
       - name: e2e client compiles

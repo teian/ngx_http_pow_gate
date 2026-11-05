@@ -13,6 +13,12 @@ stage="${1:-all}"
 core_tests() {
   echo "==> core unit tests"
   ( cd src/pow-gate-core && cargo test )
+  if command -v node >/dev/null 2>&1; then
+    echo "==> solver clock tests"
+    node --test tests/solver/
+  else
+    echo "==> solver clock tests skipped (node not found)"
+  fi
 }
 
 docker_pipeline() {

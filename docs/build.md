@@ -208,7 +208,7 @@ at config-test time, before you touch live traffic.
 | build can't locate nginx source                      | Set `NGINX_SOURCE_DIR`, or build `--features ngx/vendored` (downloads `NGX_VERSION`, default 1.31.8). |
 | `load_module` → `unknown directive`                  | `load_module` must be in the **main** context, above `http {}`.             |
 | 403 for everyone behind a load balancer              | Configure `set_real_ip_from` / `real_ip_header` so `$remote_addr` is real.  |
-| Challenge never completes                             | Check the browser console + that `{endpoint}solver.js` / `challenge` / `verify` return 200; the clock skew vs `pow_gate_proof_skew`. |
+| Challenge never completes                             | Check the browser console + that `{endpoint}solver.js` / `challenge` / `verify` return 200; a custom client that uses its own clock instead of the `now` field of the challenge (the bundled solver is immune to device clock skew). |
 
 For the deeper "why" behind any of this, see
 [docs/architecture.md](architecture.md).

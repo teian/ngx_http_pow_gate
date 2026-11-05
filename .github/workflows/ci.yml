@@ -11,6 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '26'
       - name: nginx channel updater regression tests
         run: python3 tests/build/test_nginx_versions.py
       - name: core unit tests
@@ -65,7 +68,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v5
         with:
-          node-version: '24'
+          node-version: '26'
       - name: select pinned nginx channel
         run: python3 scripts/nginx-versions.py ${{ matrix.nginx }} >> "$GITHUB_ENV"
       - name: build native nginx and module

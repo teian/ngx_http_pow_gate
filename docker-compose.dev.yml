@@ -17,10 +17,10 @@ services:
       # DEV_TARGET=nginx-smoke-alpine to poke the musl build instead
       target: ${DEV_TARGET:-nginx-smoke-debian}
       args:
-        NGINX_VERSION: "${NGINX_VERSION:-1.31.9}"
-        NGINX_SHA256: "${NGINX_SHA256:-a11c5eeee2e257f4478f0e649f84b0040787d277d2d3e5233952aa6b6dcb80ad}"
-        NGINX_DEBIAN_DIGEST: "${NGINX_DEBIAN_DIGEST:-sha256:08f354a3b44c422021a5c0f5efb3e27f8f90236b5447d3bac4053f5f50ab6760}"
-        NGINX_ALPINE_DIGEST: "${NGINX_ALPINE_DIGEST:-sha256:90b6bd2aec278b16b98221d64deb1d6d35d164567f507ab0716e6053878315aa}"
+        NGINX_VERSION: "${NGINX_VERSION:-1.31.10}"
+        NGINX_SHA256: "${NGINX_SHA256:-a9b690957fca84abdae8a9b52d66b1bb459282d7f01fe4b94b498ed8e977bdb3}"
+        NGINX_DEBIAN_DIGEST: "${NGINX_DEBIAN_DIGEST:-sha256:a786635fd3c7b9a57ea089ab1c0713e510f3b548b65fe699ce3d59e4a926b37e}"
+        NGINX_ALPINE_DIGEST: "${NGINX_ALPINE_DIGEST:-sha256:7fc0fb4af7bf006aeb31aea88069976060f8f0a0a86b667126742cc17f4e31ae}"
     ports:
       # 12222 to stay clear of the usual 8080 suspects (other local stacks)
       - "${DEV_PORT:-12222}:8080"

@@ -12,7 +12,7 @@
 > coordination](docs/redis.md) supports multiple instances and survives restarts. V1 cookies/clients are not
 > accepted. See [security](docs/security.md).
 >
-> Builds and CI always cover latest pinned **mainline 1.31.9 and stable 1.30.7**,
+> Builds and CI always cover latest pinned **mainline 1.31.10 and stable 1.30.7**,
 > each on glibc/musl and amd64/arm64. Select a channel using
 > `./scripts/build-nginx.sh stable --target nginx-smoke-debian`.
 
@@ -313,7 +313,7 @@ the request and calls into it. See [docs/testing.md](docs/testing.md).
 
 ```bash
 # build against a CONFIGURED nginx source tree (./configure first — see below)
-export NGINX_SOURCE_DIR=/path/to/nginx-1.31.9
+export NGINX_SOURCE_DIR=/path/to/nginx-1.31.10
 cargo build --release -p ngx-http-pow-gate
 
 # the artifact, renamed to the name used in load_module:

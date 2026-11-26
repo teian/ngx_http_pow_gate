@@ -8,6 +8,11 @@ pub fn b64url(bytes: &[u8]) -> String {
     B64.encode(bytes)
 }
 
+/// Encode into caller-owned storage; `None` when `output` is too small.
+pub fn b64url_into(bytes: &[u8], output: &mut [u8]) -> Option<usize> {
+    B64.encode_slice(bytes, output).ok()
+}
+
 /// Decode base64url (no padding). `None` on malformed input.
 pub fn unb64url(s: &str) -> Option<Vec<u8>> {
     B64.decode(s).ok()

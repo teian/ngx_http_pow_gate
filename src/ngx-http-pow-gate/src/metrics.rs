@@ -9,6 +9,10 @@
 //! The table is fixed-size and append-only: a slot is claimed under the zone
 //! mutex the first time a pair is seen, then only its atomic counter changes.
 //! Counting therefore never takes a lock on the request path.
+//!
+//! Each worker counts in its own row of counters, and the status endpoint adds
+//! the rows up. Workers would otherwise all write the same counter, and the
+//! cache line holding it would travel between their CPUs on every request.
 
 use std::ffi::c_void;
 use std::mem::size_of;
@@ -24,7 +28,11 @@ use ngx::ngx_string;
 
 /// The pairs are a closed set of string literals (about thirty today).
 const SLOTS: usize = 128;
-const ZONE_BYTES: usize = 128 * 1024;
+/// Counter rows. A worker uses row `ngx_worker % ROWS`; workers that share a
+/// row (more than 64 workers, or old and new workers during a reload) still
+/// count correctly, because the counters are atomic.
+const ROWS: usize = 64;
+const ZONE_BYTES: usize = 256 * 1024;
 const RESULT_MAX: usize = 16;
 const REASON_MAX: usize = 40;
 
@@ -37,12 +45,17 @@ struct Slot {
     reason_len: u8,
     result: [u8; RESULT_MAX],
     reason: [u8; REASON_MAX],
-    count: AtomicU64,
 }
 
-#[repr(C)]
+/// One worker's counters, indexed like `Table::slots`. Aligned so that two
+/// rows never share a cache line.
+#[repr(C, align(64))]
+struct Row([AtomicU64; SLOTS]);
+
+#[repr(C, align(64))]
 struct Table {
     slots: [Slot; SLOTS],
+    rows: [Row; ROWS],
 }
 
 // Activated from the worker's own configuration cycle, like the replay zone.
@@ -58,7 +71,7 @@ pub unsafe fn configure(cf: *mut ngx_conf_t) -> ngx_int_t {
         .main_conf
         .add(crate::ngx_http_pow_gate_module.ctx_index as usize)
         as *mut crate::config::MainConf;
-    let mut name = ngx_string!("pow_gate_metrics_v1");
+    let mut name = ngx_string!("pow_gate_metrics_v2");
     let zone = ngx_shared_memory_add(
         cf,
         &mut name,
@@ -180,7 +193,7 @@ fn bump(result: &'static str, reason: &'static str) {
                 index
             }
         };
-        table.slots[index].count.fetch_add(1, Ordering::Relaxed);
+        table.rows[ngx_worker % ROWS].0[index].fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -240,16 +253,19 @@ fn render() -> String {
     ));
     unsafe {
         if let Some(table) = table() {
-            for slot in &table.slots {
+            for (index, slot) in table.slots.iter().enumerate() {
                 if slot.used.load(Ordering::Acquire) == 0 {
                     break;
                 }
+                let count = table.rows.iter().fold(0u64, |total, row| {
+                    total.wrapping_add(row.0[index].load(Ordering::Relaxed))
+                });
                 // Labels are module literals: [a-z_] only, nothing to escape.
                 out.push_str(&format!(
                     "pow_gate_requests_total{{result=\"{}\",reason=\"{}\"}} {}\n",
                     std::str::from_utf8_unchecked(&slot.result[..slot.result_len as usize]),
                     std::str::from_utf8_unchecked(&slot.reason[..slot.reason_len as usize]),
-                    slot.count.load(Ordering::Relaxed)
+                    count
                 ));
             }
         }
@@ -278,7 +294,8 @@ fn render() -> String {
 pub fn load() -> (f64, u64) {
     static AT: AtomicU64 = AtomicU64::new(0);
     static BITS: AtomicU64 = AtomicU64::new(0);
-    let now = crate::runtime::now() as u64;
+    // The cached second is enough to decide when to re-read the file.
+    let now = crate::runtime::cached_now() as u64;
     if AT.swap(now, Ordering::Relaxed) != now {
         let value = std::fs::read_to_string("/proc/loadavg")
             .ok()

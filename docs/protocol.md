@@ -12,6 +12,7 @@ SEC1 P-256 encoding; signatures are WebCrypto's 64-byte raw `r || s` ECDSA/SHA-2
 | GET | `{endpoint}challenge` | Issue a key-bound challenge |
 | GET / HEAD | `{endpoint}solver.js` | Embedded protocol client |
 | POST | `{endpoint}verify` | Authenticate and atomically redeem a solution |
+| GET | `{endpoint}status` | [Confirm the sent clearance](#browser-clearance-confirmation) (204 / 409) and report the server time |
 | GET | `{endpoint}pass` | Atomically redeem a no-JS grant |
 
 Unsupported methods return 405. Endpoints must resolve to the same policy and

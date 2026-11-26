@@ -4,7 +4,7 @@
 [![module-amd64](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-amd64.yml/badge.svg)](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-amd64.yml)
 [![module-arm64](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-arm64.yml/badge.svg)](https://github.com/teian/ngx_http_pow_gate/actions/workflows/module-arm64.yml)
 
-> **Protocol v2 / 0.5.0:** challenges commit the client key and address/UA/policy
+> **Protocol v2 (since 0.5.0):** challenges commit the client key and address/UA/policy
 > context, require key possession and redeem once across nginx workers. Clearances
 > use the same binding and enforce minimum difficulty. The default replay store
 > uses **2 MiB shared per nginx instance**, survives graceful reloads and fails
@@ -12,8 +12,11 @@
 > coordination](docs/redis.md) supports multiple instances and survives restarts. V1 cookies/clients are not
 > accepted. See [security](docs/security.md).
 >
-> Builds and CI always cover latest pinned **mainline 1.31.10 and stable 1.30.7**,
-> each on glibc/musl and amd64/arm64. Select a channel using
+> Builds, CI and [releases](https://github.com/teian/ngx_http_pow_gate/releases)
+> always cover the latest pinned **mainline 1.31.10 and stable 1.30.7**,
+> each on glibc/musl and amd64/arm64. Signed, reproducible modules are published
+> per release — see [Installing a released module](#installing-a-released-module).
+> To build a channel yourself:
 > `./scripts/build-nginx.sh stable --target nginx-smoke-debian`.
 
 A native **nginx dynamic module** that puts a **proof-of-work (PoW) gate** in front
@@ -28,8 +31,9 @@ module only adds what stock nginx can't do: issuing/verifying proof-of-work,
 clearance cookies, and a *verified good-bot* allowlist (official IP ranges + FCrDNS).
 
 > **Status:** functional end to end, including the browser solver, good-bot
-> verifier and request replay. See [testing](docs/testing.md) for the tested
-> versions, local review results and configured CI matrix.
+> verifier, request replay, outcome logging and optional Redis coordination.
+> See [testing](docs/testing.md) for the tested versions, local review results
+> and CI matrix, and the [release notes](docs/releases/) for what changed.
 
 ---
 
@@ -41,7 +45,10 @@ clearance cookies, and a *verified good-bot* allowlist (official IP ranges + FCr
 - [The challenge / solve / verify handshake](#the-challenge--solve--verify-handshake)
 - [Quickstart](#quickstart)
 - [Configuration](#configuration)
+- [Logging and diagnostics](#logging-and-diagnostics)
+- [Running several gateways](#running-several-gateways)
 - [Project layout](#project-layout)
+- [Installing a released module](#installing-a-released-module)
 - [Building](#building)
 - [Performance](#performance)
 - [What's implemented](#whats-implemented)
@@ -134,8 +141,9 @@ it once the clearance is minted — no request payload is retained server-side. 
 ## The challenge / solve / verify handshake
 
 When a client is challenged, it gets an HTML page that loads the solver. The
-solver talks to three internal routes the module owns under `pow_gate_endpoint`
-(default `/.pow/`):
+solver talks to the internal routes the module owns under `pow_gate_endpoint`
+(default `/.pow/`): `challenge`, `verify`, `status` and the content-hashed
+`solver.js`. A fifth route, `pass`, redeems the no-JS tier.
 
 ```mermaid
 sequenceDiagram
@@ -149,14 +157,17 @@ sequenceDiagram
 
     B->>B: Generate or load client keypair
     B->>M: GET /.pow/challenge (X-Pow-Key)
-    M-->>B: { version, salt, difficulty, exp, token }
+    M-->>B: { version, salt, difficulty, exp, now, token }
     Note over B: find nonce: SHA256(salt‖nonce) < target
 
     B->>M: POST /.pow/verify { version, salt, nonce, pubkey, signature, ... }
     Note over M: check binding, key possession and PoW,<br/>atomically consume challenge
-    M-->>B: 204  Set-Cookie: pow_clearance=<HMAC token>
+    M-->>B: 204  Set-Cookie: pow_clearance_<scope>=<HMAC token>
 
-    B->>M: GET /  (Cookie: pow_clearance + X-Pow-Proof)
+    B->>M: GET /.pow/status  (cookie stored and accepted?)
+    M-->>B: 204 (409 if the cookie was blocked)  X-Pow-Now
+
+    B->>M: GET /  (Cookie: pow_clearance_<scope> + X-Pow-Proof)
     Note over M: HMAC verifies, not expired,<br/>per-request proof signed by bound key
     M->>U: proxy_pass (NGX_DECLINED)
     U-->>B: your page
@@ -179,7 +190,26 @@ Two tokens, two jobs:
   navigations and tag subresources (scripts, images, styles, fonts) always pass
   on a valid context-bound cookie.
 
+What keeps the handshake from failing or looping in the field:
+
+- **One-use redemption.** A solved challenge (or no-JS grant) is consumed
+  atomically across all workers — or across all gateways with
+  [Redis](docs/redis.md) — so one solution mints one clearance.
+- **Context binding.** Challenges and clearances are bound to the client
+  address (`pow_gate_ipv4_prefix` / `pow_gate_ipv6_prefix`), the User-Agent, the
+  `pow_gate_policy` name and the difficulty tier. An easy or no-JS clearance
+  never satisfies a stronger location.
+- **Server-anchored clock (0.6.0).** The solver takes its time from the
+  challenge response (`now`) and `X-Pow-Now`, so a wrong device clock neither
+  expires challenges early nor breaks proofs. The page shows a localized warning
+  when the device clock is off by a minute or more.
+- **Bounded retries.** The solver confirms the clearance on `status` before
+  navigating. A blocked cookie stops after three attempts with a visible error
+  instead of a reload loop. Challenge pages and protocol responses are
+  `no-store`; only the content-hashed `solver.js` is cached (immutable).
+
 See [docs/protocol.md](docs/protocol.md) for token formats and endpoint contracts,
+[docs/security.md](docs/security.md) for guarantees and limits,
 and [docs/architecture.md](docs/architecture.md) for the threat model.
 
 ---
@@ -232,38 +262,121 @@ Every directive at a glance. Full reference (contexts, defaults, edge cases) in
 | -------------------------- | -------------------- | -------------- | -------------------------------------------------- |
 | `pow_gate`                 | http, server, location    | `on`\|`off`    | Enable/disable the gate (inheritable flag)         |
 | `pow_gate_trusted`         | server, location          | `$var`         | Non-`0` ⇒ allow, skip the gate (usually `geo`)     |
-| `pow_gate_decision`        | server, location          | `$var`         | `allow`\|`deny`\|`challenge`\|`verify:<name>`       |
+| `pow_gate_decision`        | server, location          | `$var`         | `allow`\|`deny`\|`challenge[:tier]`\|`verify:<name>` |
 | `pow_gate_page`            | http, server, location    | `<file>`       | Custom challenge page (templated; default embedded) |
-| `pow_gate_difficulty`      | http, server, location    | `N`            | Expected hash count per solve                      |
+| `pow_gate_nojs_page`       | http, server, location    | `<file>`       | Custom page for the `challenge:nojs` tier (default embedded) |
+| `pow_gate_policy`          | http, server, location    | `<name>`       | Named clearance scope (default `default`); rename to invalidate its clearances |
+| `pow_gate_ipv4_prefix`     | http, server, location    | `1..32`        | IPv4 prefix a clearance is bound to (default `32`) |
+| `pow_gate_ipv6_prefix`     | http, server, location    | `1..128`       | IPv6 prefix a clearance is bound to (default `128`; `64` tolerates privacy addresses) |
+| `pow_gate_difficulty`      | http, server, location    | `N`            | Expected hash count per solve (default `50000`)    |
 | `pow_gate_hmac_key_file`   | http, server, location    | `<file>`       | Server secret for clearance/proof signing          |
 | `pow_gate_clearance_ttl`   | http, server, location    | `<time>`       | How long a clearance lasts (default `12h`)         |
-| `pow_gate_proof_skew`      | http, server, location    | `<time>`       | Per-request proof validity window (e.g. `5s`)      |
+| `pow_gate_proof_skew`      | http, server, location    | `<time>`       | Per-request proof validity window (default `5s`)   |
 | `pow_gate_require_proof`   | http, server, location    | `on`\|`off`    | Demand `X-Pow-Proof` on fetch/XHR (default `off`)  |
 | `pow_gate_endpoint`        | http, server, location    | `<prefix>`     | Internal route prefix (default `/.pow/`)           |
 | `pow_gate_replay`          | http, server, location    | `on`\|`off`    | Keep a challenged `POST` (any data-carrying method) alive across the challenge (default `on`) |
 | `pow_gate_replay_max_body` | http, server, location    | `<size>`       | Largest body captured for that replay (default `1m`, matching `client_max_body_size`) |
-| `pow_gate_cookie_name`     | http, server, location    | `<name>`       | Clearance cookie name (default `pow_clearance`)    |
+| `pow_gate_cookie_name`     | http, server, location    | `<name>`       | Clearance cookie base name (default `pow_clearance`) |
+| `pow_gate_cookie_scope_suffix` | http, server, location | `on`\|`off`   | Append a scope-derived suffix to the cookie name (default `on`) |
 | `pow_gate_cookie_domain`   | http, server, location    | `<domain>`     | Cookie `Domain=` (default host-only)               |
 | `pow_gate_cookie_path`     | http, server, location    | `<path>`       | Cookie `Path=` (default `/`)                       |
 | `pow_gate_cookie_samesite` | http, server, location    | `Lax\|Strict\|None` | Cookie `SameSite=` (default `Lax`)            |
 | `pow_gate_cookie_secure`   | http, server, location    | `on`\|`off`    | Cookie `Secure` flag (default `on`)                |
 | `pow_gate_cookie_httponly` | http, server, location    | `on`\|`off`    | Cookie `HttpOnly` flag (default `on`)              |
 | `pow_gate_verifier <name>` | http (block)         | `{ … }`        | Verified good-bot allowlist (IP ranges + FCrDNS)   |
+| `pow_gate_redis`           | http (block)         | `{ … }`        | Optional Redis backend for one-use redemption across gateways |
 
-Every directive except the `pow_gate_verifier` block **inherits** `http → server
+Every directive except the two blocks **inherits** `http → server
 → location` and can be overridden at any level — set the tunables once high up,
-flip exceptions low down. The verifier block is `http`-only because it registers
-a global named allowlist used by `verify:<name>` from anywhere. Inside the block:
-`ip_ranges_url`, `ip_ranges_refresh`, `fcrdns_suffix`, `fcrdns_ttl` — see
+flip exceptions low down. The blocks are `http`-only: `pow_gate_verifier`
+registers a global named allowlist used by `verify:<name>` from anywhere, and
+`pow_gate_redis` is instance-wide. Inside the verifier block:
+`ip_ranges_url`, `ip_ranges_refresh`, `ip_ranges_max_stale`, `fcrdns_suffix`,
+`fcrdns_ttl` — see
 [docs/configuration.md](docs/configuration.md#the-pow_gate_verifier-block).
+
+When a location overrides `pow_gate_policy` or `pow_gate_difficulty`, give it its
+own `pow_gate_endpoint` too (for example `/search/.pow/`): the endpoints must
+resolve to the same policy as the content they protect.
+
+With `pow_gate_cookie_scope_suffix on` the effective cookie name is the base name
+plus `_` and 24 hex characters derived from its scope (domain, path, flags,
+endpoint, policy, address prefixes), so a scope change can never collide with an
+old cookie. `$pow_gate_cookie_name` exposes the effective name — use it in CDN or
+cache rules instead of a fixed string. See
+[scoped cookie names](docs/configuration.md#scoped-cookie-names-and-migration-050).
 
 The decision values understood by `pow_gate_decision`:
 
 - `allow` — let it through.
 - `deny` — `403`, no challenge.
-- `challenge` — must solve PoW (the default for unknown clients).
+- `challenge` — must solve PoW at `pow_gate_difficulty` (the default for unknown
+  clients; an empty or unparsable value is treated the same, so a `map` typo
+  never opens the gate).
+- `challenge:<N>` — PoW at difficulty `N` for this client, without a separate
+  `location`.
+- `challenge:js` — JS-execution proof only, no measurable hashing.
+- `challenge:nojs` / `challenge:nojs:<secs>` — meta-refresh wait (default 2 s,
+  1–30 s) for text browsers; the weakest tier, reachable only where your `map`
+  routes it.
 - `verify:<name>` — run the named `pow_gate_verifier`; pass only if it confirms
-  the connecting IP really belongs to that bot.
+  the connecting IP really belongs to that bot, otherwise challenge.
+
+---
+
+## Logging and diagnostics
+
+The module exports request-local variables for `log_format` — no client header
+is forwarded upstream for this:
+
+| Variable                | Content                                                        |
+| ----------------------- | -------------------------------------------------------------- |
+| `$pow_gate_result`      | `off`, `bypass`, `deny`, `challenge`, `issued`, `accepted`, `rejected`, `error` or `asset` |
+| `$pow_gate_reason`      | Bounded reason, e.g. `trusted`, `verified_range`, `verified_dns`, `clearance`, `feed_stale`, `proof_skew`, `challenge_expired`, `wrong_solution`, `redemption_unavailable` |
+| `$pow_gate_difficulty`  | Effective hash budget, `0` when not applicable                 |
+| `$pow_gate_cookie_name` | Effective (scoped) clearance cookie name                       |
+
+```nginx
+log_format pow '$remote_addr "$request" $status '
+               'pow=$pow_gate_result reason=$pow_gate_reason difficulty=$pow_gate_difficulty';
+access_log /var/log/nginx/pow.log pow;
+```
+
+A steady stream of `proof_skew` or `challenge_expired` points at clients with
+wrong clocks or a custom client that ignores the server time. The full value
+list is in [docs/configuration.md › Outcome logging](docs/configuration.md#outcome-logging);
+field symptoms are in [docs/troubleshooting.md](docs/troubleshooting.md).
+
+---
+
+## Running several gateways
+
+One nginx instance needs nothing extra: the 2 MiB shared-memory ledger covers
+all its workers and survives graceful reloads. Behind a load balancer with
+several nginx instances, add a `pow_gate_redis { … }` block so a solution is
+redeemed once across all of them and clearances survive a full restart:
+
+```nginx
+pow_gate_redis {
+    address    127.0.0.1:6379;
+    namespace  mysite;
+    epoch_file /etc/pow/cluster.epoch;   # from scripts/redis-epoch.py
+}
+```
+
+It expects a dedicated Redis primary with `maxmemory-policy noeviction`; it is
+not a Redis Cluster/Sentinel client. Redis mode never falls back to the local
+ledger — if Redis is unavailable, redemption fails closed. Setup, AUTH, bounds
+and failover fencing are in [docs/redis.md](docs/redis.md).
+
+Related building blocks, all plain nginx configuration:
+
+- [examples/regular-traffic-limits.conf](examples/regular-traffic-limits.conf) —
+  global request limits for cleared traffic, starting in dry-run mode.
+- [examples/asn-policy.conf](examples/asn-policy.conf) — per-ASN decisions via
+  the optional GeoIP2 module feeding the same `map`.
+- [examples/solver-gzip.conf](examples/solver-gzip.conf) — compression for the
+  solver asset.
 
 ---
 
@@ -273,7 +386,7 @@ A **virtual workspace**: the root `Cargo.toml` is only workspace glue; every cra
 lives under `src/` with its own `src/` (and `tests/`).
 
 ```text
-ngx_pow/
+ngx_http_pow_gate/
 ├── Cargo.toml                     [workspace] only (not a package)
 ├── src/
 │   ├── ngx-http-pow-gate/         the nginx dynamic module (cdylib)
@@ -281,31 +394,80 @@ ngx_pow/
 │   │   └── src/
 │   │       ├── lib.rs             module registration: ngx_module_t, ctx, ngx_modules!
 │   │       ├── config.rs          directives, MainConf/LocationConf, create + merge
+│   │       ├── runtime.rs         resolved per-location config, cached key schedules
 │   │       ├── access.rs          ACCESS-phase handler — allow/deny/challenge decision
 │   │       ├── challenge.rs       challenge-page + internal /.pow/ endpoints
+│   │       ├── response.rs        gate responses (page, JSON, cookie, no-cache)
 │   │       ├── replay.rs          capture a challenged POST so it survives
+│   │       ├── body_limit.rs      bounded request-body reads
+│   │       ├── redemption.rs      shared-memory one-use redemption ledger
+│   │       ├── cluster.rs         Redis redemption backend (pow_gate_redis {})
 │   │       ├── verifier.rs        pow_gate_verifier {} — good-bot allowlist
+│   │       ├── observability.rs   $pow_gate_* variables + outcome logging
 │   │       └── engine/            thin nginx shell over the core (FFI seam)
 │   └── pow-gate-core/             the engine — NO nginx dep, unit-tested
-│       ├── Cargo.toml
-│       ├── src/     target · codec · mac · pow · clearance · proof · replay
+│       ├── Cargo.toml             optional `native-crypto` feature (ring)
+│       ├── src/     pow · clearance · proof · context · decision · nojs ·
+│       │            redemption · redis · ranges · feeds · verdict_cache · …
 │       ├── tests/   one test crate per concern (their own projects)
 │       └── benches/ Criterion microbenchmarks (engine hot path)
-├── tests/integration/            black-box e2e client (standalone project)
+├── tests/
+│   ├── integration/              black-box e2e client (standalone project)
+│   ├── pow-clearance/            native, reload, feeds, HTTP/2, HTTP/3, Redis suites
+│   ├── browser/                  headless-browser resilience suite
+│   └── solver/                   solver unit tests (node --test)
 ├── perf/                         HTTP load generator (standalone project)
+├── experiments/pow/              alternative-PoW verifier-cost measurements
 ├── assets/
 │   ├── challenge.html             embedded fallback page (themed, i18n)
+│   ├── challenge-nojs.html        embedded no-JS (meta-refresh) page
 │   └── solver.js                  browser solver (keygen, PoW loop, verify, proof)
-├── docker/                       Dockerfile (multi-stage) + nginx.test.conf
-├── docker-compose.test.yml       live e2e   ·  docker-compose.perf.yml  load test
-├── examples/nginx.conf           full commented configuration example
-├── scripts/                      test.sh (pipeline) · perf.sh (load test)
-└── docs/  architecture · configuration · build · protocol · challenge-page · testing · troubleshooting · performance
+├── docker/                       Dockerfile (multi-stage) · nginx-versions.json (pins)
+│                                 · nginx.test.conf · nginx.dev.conf
+├── docker-compose.{test,dev,perf}.yml   live e2e · manual sandbox · load test
+├── examples/                     nginx.conf (full, commented) · asn-policy ·
+│                                 regular-traffic-limits · solver-gzip
+├── scripts/                      test.sh · dev.sh · perf.sh · build-nginx.sh ·
+│                                 update-nginx.sh · redis-epoch.py
+├── .github/workflows/            ci · module-amd64/arm64 · nginx-update · release
+└── docs/  architecture · configuration · build · protocol · security · redis ·
+           challenge-page · testing · troubleshooting · performance · releasing ·
+           releases/
 ```
 
 The cryptography lives in **`src/pow-gate-core`** (no nginx dependency, so it
 unit-tests anywhere); **`src/ngx-http-pow-gate`** is a thin FFI shell that reads
 the request and calls into it. See [docs/testing.md](docs/testing.md).
+
+---
+
+## Installing a released module
+
+Each [release](https://github.com/teian/ngx_http_pow_gate/releases) ships eight
+modules: the pinned nginx **mainline and stable** versions × `glibc`/`musl` ×
+`amd64`/`arm64`. The file name carries everything that must match your nginx:
+
+```text
+ngx_http_pow_gate_module-<module-version>-nginx<nginx-version>-<libc>-<arch>.so
+```
+
+Pick the one matching `nginx -v`, your libc (Debian/Ubuntu/RHEL → `glibc`,
+Alpine → `musl`) and `uname -m`, verify it, and install it under the name used
+in `load_module`:
+
+```bash
+module=ngx_http_pow_gate_module-<module-version>-nginx<nginx-version>-glibc-amd64.so
+sha256sum -c --ignore-missing SHA256SUMS
+gh attestation verify "$module" --repo teian/ngx_http_pow_gate
+cp "$module" /etc/nginx/modules/ngx_http_pow_gate_module.so
+```
+
+Every module is built twice and published only if both builds are
+byte-identical. It carries a GitHub build-provenance attestation and a keyless
+cosign signature (`.sig` + `.pem`); the cosign command is in each release's
+notes. A module loads **only** into the exact nginx version it was built for,
+so upgrade nginx and the module together. New nginx releases are picked up by a
+daily job and published as a rebuild — see [docs/releasing.md](docs/releasing.md).
 
 ---
 
@@ -352,32 +514,37 @@ Full methodology, memory snapshots and reproduction commands are in
 the optional Redis cluster backend are in [docs/security.md](docs/security.md).
 A complete initial [global limits include](examples/regular-traffic-limits.conf)
 is available for regular traffic; it starts in dry-run mode for tuning.
+[Alternative PoW experiments](experiments/pow/README.md) measure verifier costs
+for Argon2id and HashX; production retains SHA-256.
 
 ---
 
 ## What's implemented
 
-The module is functional end to end. Local v0.5.0 validation covers both crypto backends, core tests
-and native glibc/amd64 builds and live HTTP/1.1, HTTP/2 and HTTP/3 suites on
-nginx 1.31.7 and 1.30.6. The allocation follow-up repeats the complete glibc/musl
-Docker matrix on amd64. The earlier performance pass also passed the arm64
-matrix under QEMU for correctness. Performance tests run only on Linux/amd64.
-See [docs/testing.md](docs/testing.md).
+The module is functional end to end. Every push runs the core tests on both
+crypto backends, the solver unit tests, the Docker e2e handshake for both pinned
+nginx channels on glibc/musl × amd64/arm64 (native arm runners), and a
+resilience job with a real browser, HTTP/2, HTTP/3 and both replay backends.
+Performance tests run only on Linux/amd64. Dated local review results are in
+[docs/testing.md](docs/testing.md).
 
 | Area | Evidence |
 | ---- | -------- |
-| Crypto engine — PoW, clearance, ECDSA proof, IP-ranges (`src/pow-gate-core`) | **78 portable / 79 accelerated tests** green (`cargo test -p pow-gate-core`, with/without `--features native-crypto`) |
-| Browser solver (`assets/solver.js`) | real WebCrypto keygen + 256-bit PoW + proof + IndexedDB |
-| Challenge page (`assets/challenge.html`) | themed (light/dark) + i18n (26 languages) |
+| Crypto engine — PoW, clearance, ECDSA proof, context binding, IP-ranges (`src/pow-gate-core`) | **79 portable / 80 accelerated tests** green (`cargo test -p pow-gate-core`, with/without `--features native-crypto`) |
+| Browser solver (`assets/solver.js`) | real WebCrypto keygen + 256-bit PoW across Web Workers + proof + IndexedDB; server-anchored clock covered by `node --test` |
+| Challenge pages (`assets/challenge.html`, `challenge-nojs.html`) | themed (light/dark) + i18n (26 languages) + clock warning; no-JS page works in lynx/w3m |
+| Challenge tiers — `challenge:js`, `challenge:<N>`, `challenge:nojs[:secs]` | difficulty HMAC-bound into the token; a weaker clearance never satisfies a stronger policy |
 | Directives, config structs, inheritance merge | compiles + `nginx -t` passes |
-| Mainline 1.31.7 and stable 1.30.6 module builds | native glibc/amd64 load and live suites passed; full libc/arch CI configured |
+| Pinned mainline and stable module builds | reproducible double build per libc/arch in the release workflow; e2e matrix in CI |
 | ACCESS handler + phase registration | handler runs (registered in `postconfiguration`) |
-| `/.pow/` endpoints — challenge JSON, solver, **async `POST /verify` body** | served correctly in the live test |
-| Response I/O — challenge page, JSON, `Set-Cookie`, `204` | written via the `ngx` output chain |
-| Clearance cookie + per-request proof validation | cookie + `X-Pow-Proof` checked against the cookie-bound key |
-| Full handshake: challenge → solve → verify → cleared | e2e stage green |
+| `/.pow/` endpoints — challenge JSON, solver, **async `POST /verify` body**, `status`, `pass` | served correctly in the live test; unsupported methods get `405` |
+| Response I/O — challenge page, JSON, `Set-Cookie`, `204` | written via the `ngx` output chain; pages and protocol responses are `no-store`, the hashed solver is immutable |
+| Clearance cookie + per-request proof validation | scoped cookie + `X-Pow-Proof` checked against the cookie-bound key |
+| One-use redemption — shared-memory ledger, optional Redis backend | reload and cross-node/failure suites (`tests/pow-clearance`) |
+| Full handshake: challenge → solve → verify → confirm → cleared | e2e stage green over HTTP/1.1, HTTP/2 and HTTP/3 |
 | **Challenged `POST` survives** — body captured into the page, re-issued by the solver | e2e: the payload comes back verbatim; `off` / oversized bodies fall back |
-| **Good-bot verifier** — `pow_gate_verifier {}` block, IP-range feed fetch + refresh, CIDR match, FCrDNS, client-IP parse | **e2e: a `verify:<name>` UA is allowed via the live IP-range feed** |
+| **Good-bot verifier** — `pow_gate_verifier {}` block, IP-range feed fetch + refresh + staleness expiry, CIDR match, FCrDNS, client-IP parse | **e2e: a `verify:<name>` UA is allowed via the live IP-range feed** |
+| Outcome variables — `$pow_gate_result`, `$pow_gate_reason`, `$pow_gate_difficulty`, `$pow_gate_cookie_name` | exercised in the native and Redis suites |
 
 ### Known limitations
 
@@ -390,11 +557,18 @@ See [docs/testing.md](docs/testing.md).
   body as they did before.
 - FCrDNS resolves on a background thread and caches verdicts; the very first
   request for a new IP falls through to a challenge while DNS is in flight
-  (fail-closed). The IP-range path has no such delay.
-
-Only the verified-good-bot allowlist is unfinished. Until it lands, a
-`verify:<name>` decision **fails closed** — it falls through to a normal challenge
-rather than wrongly allowing — so it is safe to ship the gate without it.
+  (fail-closed). The IP-range path has no such delay. Feeds start empty, so
+  right after a start every `verify:<name>` client is challenged until the first
+  feed fetch or DNS verdict lands.
+- Clearances are bound to the exact client address by default. Clients whose
+  address changes (mobile networks, IPv6 privacy addresses) solve again; widen
+  `pow_gate_ipv4_prefix` / `pow_gate_ipv6_prefix` if that is too strict.
+- The default replay ledger is per nginx instance and is lost on a full restart,
+  which invalidates outstanding clearances; at capacity it fails closed with
+  `503`. Use [Redis](docs/redis.md) for several instances or restart survival.
+- `pow_gate_require_proof on` needs your own pages to sign their `fetch`/XHR
+  calls, and no-JS clearances cannot sign at all — see
+  [docs/configuration.md](docs/configuration.md#pow_gate_require_proof-on--off).
 
 ---
 
@@ -407,12 +581,17 @@ rather than wrongly allowing — so it is safe to ship the gate without it.
 - **[docs/build.md](docs/build.md)** — toolchain, building against your nginx,
   ABI matching, Docker, install, reload, troubleshooting.
 - **[docs/protocol.md](docs/protocol.md)** — the `/.pow/` endpoints, challenge
-  and token formats, and the client/server message contract.
+  and token formats, server time, and the client/server message contract.
+- **[docs/security.md](docs/security.md)** — client binding, one-use redemption,
+  guarantees, operational limits and the security review.
+- **[docs/redis.md](docs/redis.md)** — Redis coordination for several gateways:
+  setup, epoch provisioning, bounds, failover fencing.
 - **[docs/challenge-page.md](docs/challenge-page.md)** — customizing the
   "Just a moment…" page: the hook contract, placeholders, a minimal template, and
   the built-in light/dark theme + i18n (26 languages, auto-detected).
 - **[docs/testing.md](docs/testing.md)** — the self-verifying Docker pipeline
-  (engine tests → build → `nginx -t` → live e2e handshake).
+  (engine tests → build → `nginx -t` → live e2e handshake), the native,
+  transport, browser and Redis suites, and the `dev.sh` manual sandbox.
 - **[docs/troubleshooting.md](docs/troubleshooting.md)** — field symptoms and
   diagnosis: broken assets on gated pages, misleading browser error strings,
   the one-command challenge-page check.
@@ -420,6 +599,8 @@ rather than wrongly allowing — so it is safe to ship the gate without it.
   microbenchmarks, the HTTP load suite, and the ECDSA-proof bottleneck.
 - **[docs/releasing.md](docs/releasing.md)** — versioning (module vs. nginx
   axis), tag/title/artifact conventions, cutting a release, automated nginx bumps.
+- **[docs/releases/](docs/releases/)** — per-release notes with artifact tables
+  and verification commands.
 
 ---
 
@@ -440,20 +621,3 @@ idea as a native nginx dynamic module — the tiered challenge model
 (JS-execution proof, scaled proof-of-work, and the no-JS meta-refresh
 fallback) follows the path Anubis charted. If you need a standalone reverse
 proxy rather than an nginx module, go use Anubis.
-
-
-## 0.5.0 operational improvements
-
-- Scoped cookie names avoid collisions after scope changes; upgrades require one
-  fresh solve. `pow_gate_cookie_scope_suffix off` retains a fixed name when needed.
-- Bounded browser retries, script/worker recovery and a clearance confirmation
-  endpoint prevent transient failures and blocked cookies from causing loops.
-- All gate-generated responses explicitly prohibit caching.
-- `$pow_gate_result`, `$pow_gate_reason`, and `$pow_gate_difficulty` expose outcomes
-  through native nginx logs.
-- Crawler feeds expire independently and reject malformed CIDRs. Optional
-  [ASN policies](examples/asn-policy.conf) compose with nginx GeoIP2 variables.
-- Optional [Redis coordination](docs/redis.md) provides cross-instance one-use
-  redemption with nonblocking sockets, explicit epoch fencing and bounded queues.
-- [Alternative PoW experiments](experiments/pow/README.md) measure verifier costs;
-  production retains SHA-256.

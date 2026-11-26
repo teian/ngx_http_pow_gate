@@ -23,7 +23,7 @@ fn verify_signature(pk: &[u8], message: &[u8], sig: &[u8]) -> bool {
             let Ok(key) = VerifyingKey::from_sec1_bytes(pk) else {
                 return false;
             };
-            encoded = key.to_encoded_point(false);
+            encoded = key.to_sec1_point(false);
             encoded.as_bytes()
         } else {
             pk

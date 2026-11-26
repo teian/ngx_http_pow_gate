@@ -16,7 +16,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
 use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
 use pow_gate_core::target::solution_valid;
-use rand_core::OsRng;
+use p256::elliptic_curve::Generate;
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -49,9 +49,9 @@ struct Identity {
 }
 
 fn handshake(base: &str) -> Identity {
-    let sk = SigningKey::random(&mut OsRng);
+    let sk = SigningKey::generate();
     let pk = VerifyingKey::from(&sk)
-        .to_encoded_point(false)
+        .to_sec1_point(false)
         .as_bytes()
         .to_vec();
 

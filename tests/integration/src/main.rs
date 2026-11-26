@@ -29,7 +29,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
 use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
 use pow_gate_core::target::solution_valid;
-use rand_core::OsRng;
+use p256::elliptic_curve::Generate;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(serde::Deserialize)]
@@ -102,9 +102,9 @@ fn main() {
     }
     println!("✓ uncleared request was challenged");
 
-    let sk = SigningKey::random(&mut OsRng);
+    let sk = SigningKey::generate();
     let pk = VerifyingKey::from(&sk)
-        .to_encoded_point(false)
+        .to_sec1_point(false)
         .as_bytes()
         .to_vec();
     let pubkey = B64.encode(&pk);
@@ -788,8 +788,8 @@ fn extras(base: &str) {
 
     // 12d. surcharged issuance: 3× at /challenge, still redeemable against the
     //      unscaled policy, and the cookie is partitioned
-    let sk = SigningKey::random(&mut OsRng);
-    let pk = VerifyingKey::from(&sk).to_encoded_point(false).as_bytes().to_vec();
+    let sk = SigningKey::generate();
+    let pk = VerifyingKey::from(&sk).to_sec1_point(false).as_bytes().to_vec();
     let pubkey = B64.encode(&pk);
     let response = ureq::get(&format!("{base}/extras/.pow/challenge"))
         .set("X-Pow-Key", &pubkey)

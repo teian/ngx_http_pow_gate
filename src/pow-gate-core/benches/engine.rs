@@ -70,7 +70,7 @@ impl Measurement for BenchClock {
 }
 use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
 use pow_gate_core::{clearance, context, pow, proof, target};
-use rand_core::OsRng;
+use p256::elliptic_curve::Generate;
 use std::hint::black_box;
 
 const KEY: &[u8] = b"benchmark-server-secret-key-32by";
@@ -126,9 +126,9 @@ fn bench_target(c: &mut Criterion<BenchClock>) {
 }
 
 fn bench_clearance(c: &mut Criterion<BenchClock>) {
-    let pk = SigningKey::random(&mut OsRng)
+    let pk = SigningKey::generate()
         .verifying_key()
-        .to_encoded_point(false)
+        .to_sec1_point(false)
         .as_bytes()
         .to_vec();
     let token = clearance::issue(
@@ -236,9 +236,9 @@ fn bench_context(c: &mut Criterion<BenchClock>) {
         context::AddressPolicy::default(),
     )
     .unwrap();
-    let pk = SigningKey::random(&mut OsRng)
+    let pk = SigningKey::generate()
         .verifying_key()
-        .to_encoded_point(false)
+        .to_sec1_point(false)
         .as_bytes()
         .to_vec();
     let required = context::Assurance::Pow { difficulty: 500000 };
@@ -353,9 +353,9 @@ fn bench_ranges(c: &mut Criterion<BenchClock>) {
 }
 
 fn bench_proof(c: &mut Criterion<BenchClock>) {
-    let sk = SigningKey::random(&mut OsRng);
+    let sk = SigningKey::generate();
     let pk = VerifyingKey::from(&sk)
-        .to_encoded_point(false)
+        .to_sec1_point(false)
         .as_bytes()
         .to_vec();
     let sig: Signature = sk.sign(proof::message("GET", "/dashboard", 1000).as_bytes());

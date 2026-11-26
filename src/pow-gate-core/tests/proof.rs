@@ -3,12 +3,12 @@
 
 use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
 use pow_gate_core::proof::{check, message, verify, ProofCheck};
-use rand_core::OsRng;
+use p256::elliptic_curve::Generate;
 
 fn keypair() -> (SigningKey, Vec<u8>) {
-    let sk = SigningKey::random(&mut OsRng);
+    let sk = SigningKey::generate();
     let pk = VerifyingKey::from(&sk)
-        .to_encoded_point(false)
+        .to_sec1_point(false)
         .as_bytes()
         .to_vec();
     (sk, pk)
@@ -79,9 +79,9 @@ fn garbage_signature_rejected() {
 
 #[test]
 fn challenge_redemption_requires_the_committed_private_key() {
-    let sk = SigningKey::random(&mut OsRng);
-    let other = SigningKey::random(&mut OsRng);
-    let pk = sk.verifying_key().to_encoded_point(false);
+    let sk = SigningKey::generate();
+    let other = SigningKey::generate();
+    let pk = sk.verifying_key().to_sec1_point(false);
     let message = pow_gate_core::proof::challenge_message("signed-token");
     let sig: Signature = sk.sign(message.as_bytes());
     assert!(pow_gate_core::proof::valid_public_key(pk.as_bytes()));

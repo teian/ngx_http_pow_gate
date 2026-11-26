@@ -331,8 +331,8 @@ is forwarded upstream for this:
 
 | Variable                | Content                                                        |
 | ----------------------- | -------------------------------------------------------------- |
-| `$pow_gate_result`      | `off`, `bypass`, `deny`, `challenge`, `issued`, `accepted`, `rejected`, `error` or `asset` |
-| `$pow_gate_reason`      | Bounded reason, e.g. `trusted`, `verified_range`, `verified_dns`, `clearance`, `feed_stale`, `proof_skew`, `challenge_expired`, `wrong_solution`, `redemption_unavailable` |
+| `$pow_gate_result`      | `off`, `bypass` (passed to upstream, including on a valid clearance), `deny`, `challenge` (page served), `issued` (challenge handed out), `accepted` (solution accepted, clearance minted), `rejected`, `error` or `asset` |
+| `$pow_gate_reason`      | Bounded reason, e.g. `trusted`, `verified_range`, `verified_dns`, `clearance`, `no_clearance`, `feed_stale`, `proof_skew`, `challenge_expired`, `wrong_solution`, `redemption_unavailable` |
 | `$pow_gate_difficulty`  | Effective hash budget, `0` when not applicable                 |
 | `$pow_gate_cookie_name` | Effective (scoped) clearance cookie name                       |
 
@@ -429,7 +429,8 @@ ngx_http_pow_gate/
 │                                 regular-traffic-limits · solver-gzip
 ├── scripts/                      test.sh · dev.sh · perf.sh · build-nginx.sh ·
 │                                 update-nginx.sh · redis-epoch.py
-├── .github/workflows/            ci · module-amd64/arm64 · nginx-update · release
+├── wiki/                         how-to pages, published to the GitHub wiki
+├── .github/workflows/            ci · module-amd64/arm64 · nginx-update · release · wiki
 └── docs/  architecture · configuration · build · protocol · security · redis ·
            challenge-page · testing · troubleshooting · performance · releasing ·
            releases/
@@ -574,6 +575,10 @@ Performance tests run only on Linux/amd64. Dated local review results are in
 
 ## Documentation
 
+- **[Wiki how-tos](https://github.com/teian/ngx_http_pow_gate/wiki)** — task
+  guides: install a released module, first gate, search engines, crawler policy,
+  exclusions, load balancers, Redis, challenge page, logs, upgrades. Sources in
+  [`wiki/`](wiki/).
 - **[docs/architecture.md](docs/architecture.md)** — phase integration, full
   request lifecycle, the two-token security model, threat model.
 - **[docs/configuration.md](docs/configuration.md)** — every directive: context,

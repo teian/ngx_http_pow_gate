@@ -322,8 +322,8 @@ module scripts and preloads use `mode: cors` yet still cannot carry headers.
 
 > Context: `http`, `server`, `location` · Default: `/.pow/`
 
-The URL prefix for the three internal routes the module serves
-(`challenge`, `solver.js`, `verify`). Change it if `/.pow/` collides with your
+The URL prefix for the internal routes the module serves
+(`challenge`, `solver.js`, `verify`, `status`, `pass`). Change it if `/.pow/` collides with your
 app. Must start and end with `/`. The same value is injected into the page as
 `{{endpoint}}`.
 
@@ -771,10 +771,13 @@ access_log /var/log/nginx/pow.log pow;
 ```
 
 `$pow_gate_result` is `off`, `bypass`, `deny`, `challenge`, `issued`, `accepted`,
-`rejected`, `error`, or `asset`. `$pow_gate_reason` supplies a bounded reason such
-as `trusted`, `allow`, `verified_range`, `verified_dns`, `verifier_unconfirmed`,
-`feed_stale`, `clearance`, `policy`, `pow`, `nojs`, `invalid_key`,
-`invalid_submission`, `body_too_large`, `replay`, `expired`, `issuer_unavailable`,
+`rejected`, `error`, or `asset`. A request passed to the upstream is `bypass` —
+including one carrying a valid clearance (`reason=clearance`); `issued` is a
+challenge or no-JS grant handed out, and `accepted` is a solution that minted a
+clearance. `$pow_gate_reason` supplies a bounded reason such
+as `disabled`, `trusted`, `allow`, `verified_range`, `verified_dns`, `verifier_unconfirmed`,
+`feed_stale`, `clearance`, `no_clearance`, `policy`, `pow`, `nojs`, `solver`, `invalid_key`,
+`invalid_submission`, `invalid_grant`, `body_too_large`, `replay`, `expired`, `issuer_unavailable`,
 or `redemption_unavailable`. Failures have distinct reasons so clock problems are
 diagnosable: `challenge_expired` (a `/verify` whose challenge had expired on arrival),
 `bad_token`, `wrong_solution`, and `proof_skew` (valid clearance, but the proof

@@ -1,0 +1,49 @@
+name: wiki
+
+# Publishes the wiki/ directory to the GitHub wiki, so wiki pages are reviewed
+# and versioned like the rest of the repository. The wiki is a mirror: pages
+# edited directly in the wiki are overwritten by the next run.
+#
+# One-time setup: the wiki's git repository only exists after its first page was
+# created in the web UI (Wiki tab → "Create the first page"). Until then this
+# workflow warns and exits without publishing.
+
+on:
+  push:
+    branches: [main]
+    paths: ["wiki/**", ".github/workflows/wiki.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # the wiki repository is pushed with the workflow token
+
+concurrency:
+  group: wiki
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: sync wiki/ to the GitHub wiki
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git"
+          if ! git clone --quiet --depth 1 "$remote" "$RUNNER_TEMP/wiki"; then
+            echo "::warning::The wiki repository does not exist yet. Enable the wiki and create its first page in the web UI, then re-run this workflow."
+            exit 0
+          fi
+          rsync --archive --delete --exclude .git wiki/ "$RUNNER_TEMP/wiki/"
+          cd "$RUNNER_TEMP/wiki"
+          git add --all
+          if git diff --cached --quiet; then
+            echo "wiki is up to date"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit --quiet -m "Sync wiki from ${GITHUB_SHA::7}"
+          git push --quiet origin HEAD

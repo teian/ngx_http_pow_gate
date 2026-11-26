@@ -53,6 +53,31 @@ map "$pow_network_tier:$http_user_agent" $pow_decision {
 }
 ```
 
+## Add up several weak signals
+
+One signal is rarely enough to act on. Give each a weight, let the module add
+them up, and decide on the total:
+
+```nginx
+map $http_accept_language $w_no_language { default 0; "" 30; }
+map $http_user_agent      $w_tool        { default 0; ~*(python|curl|scrapy) 40; }
+
+map $pow_gate_score $pow_decision {
+    default        challenge;
+    "~^\d{3,}$"    deny;                # 100 and up
+    ~^[5-9]\d$     challenge:2000000;   # 50–99
+}
+
+location / {
+    pow_gate          on;
+    pow_gate_weights  $w_no_language $w_tool;
+    pow_gate_decision $pow_decision;
+}
+```
+
+Negative weights lower the score. A complete include is in
+[examples/scoring.conf](https://github.com/teian/ngx_http_pow_gate/blob/main/examples/scoring.conf).
+
 ## A harder gate for one path
 
 ```nginx
@@ -67,6 +92,11 @@ location /search/ {
 Give such a location its own `pow_gate_endpoint`: the endpoint that issues a
 clearance must resolve to the same policy and difficulty as the content it
 protects.
+
+## Start from the bundled lists
+
+Ready-made `map` includes for AI crawlers, search engines and automation tools
+are in the repository: [Use the bundled rules](Howto-Use-the-bundled-rules).
 
 ## Do not stop at the gate
 

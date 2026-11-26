@@ -33,8 +33,12 @@ All code lives under a crate's `src/`: the nginx module in
 src/pow-gate-core/tests/         integration tests for the engine — one crate per file
                     (target, codec, pow, clearance, proof, ranges), public API only
 tests/integration/  the black-box e2e client — a standalone Cargo project that
-                    is NOT a workspace member (no nginx dependency)
-docker/             Dockerfile (multi-stage pipeline) + nginx.test.conf
+                    is NOT a workspace member (no nginx dependency);
+                    src/client.rs is its HTTP layer over ureq
+tests/pow-clearance/  native suites run against a real nginx binary: wire,
+                    reload, restart, feeds, gzip, HTTP/2, HTTP/3, Redis
+docker/             Dockerfile (multi-stage pipeline) + nginx.test.conf +
+                    nginx.rules.conf (loads rules/ and examples/)
 docker-compose.test.yml   wires nginx + the e2e client together
 scripts/test.sh     runs the whole thing locally
 ```
@@ -82,7 +86,11 @@ stable module ABI (see [build.md](build.md)).
 Loads the freshly built `.so` into the matching `nginx:<version>` image (Debian
 or Alpine) and runs `nginx -t` against
 [docker/nginx.test.conf](../docker/nginx.test.conf), which exercises **every**
-directive. It fails if the module is ABI-incompatible or any directive won't
+directive. It then runs `nginx -t` a second time against
+[docker/nginx.rules.conf](../docker/nginx.rules.conf), which includes everything
+under [`rules/`](../rules/) and the standalone files under
+[`examples/`](../examples/), so a rule or example that stops parsing fails the
+build. It fails if the module is ABI-incompatible or any directive won't
 parse:
 
 ```bash
@@ -110,6 +118,20 @@ cookie, a cleared request reaches the upstream, and a challenged `POST` (and
 `PUT`) comes back inside the challenge page verbatim (`pow_gate_replay`) — with
 `replay off` and an oversized body falling back to the plain page, and
 `client_max_body_size` still rejecting ahead of the gate.
+
+Its last step covers the policy and observability features: `deny:429` answers
+`429` and `deny:444` closes the connection; `$pow_gate_score` sums the weights
+and selects the decision; the challenge page carries the honeypot link and a hit
+on `{endpoint}trap` answers `404`; a challenge issued under
+`pow_gate_difficulty_scale` redeems and sets a `Partitioned` cookie; and
+`pow_gate_status` reports counters for the outcomes the run produced.
+
+The `security-reload` target builds a native nginx and runs
+`tests/pow-clearance/reload-test.py` and `restart-test.py` unprivileged. The
+restart test checks that a clearance survives a full restart with
+`pow_gate_state_file`, that a spent challenge and an outstanding pre-restart
+grant are both refused afterwards, that a fresh grant redeems exactly once, and
+that nothing survives without the directive.
 
 ---
 
@@ -414,3 +436,26 @@ Linux/amd64 Docker glibc/musl end-to-end cells and both failed-reload targets pa
 ARM64 results elsewhere in this document describe the earlier performance pass.
 All performance measurements are Linux/amd64 only; the follow-up benchmark adds
 physical-core separation, client/server CPU accounting and concurrency sweeps.
+
+## Feature and dependency pass, 2026-11-26
+
+This pass added metrics, bundled rules, weighted scoring, load-adaptive
+difficulty, the honeypot, restart survival, `Partitioned` cookies and
+`deny:<status>`, and moved the dependencies to `ureq` 3, `p256` 0.14, `sha2`
+0.11, `hmac` 0.13 and `getrandom` 0.4. The build images moved to Rust 1.100;
+the musl build moved to Alpine 3.24 with clang 20.
+
+Results on Linux/amd64:
+
+- Core tests: 80 portable and 81 native-crypto tests pass.
+- Docker pipeline (`./scripts/test.sh docker`): build, both `nginx -t` passes
+  and the live e2e with the security, HTTP/2 and HTTP/3 suites pass on nginx
+  1.31.10 and 1.30.7, on Debian/glibc and Alpine/musl.
+- `reload-test.py` and `restart-test.py` pass on both channels.
+- `feeds-test.py` passes against a native nginx 1.31.10 built with the realip
+  module. A standalone client with the refresher's settings fetched seven of
+  the eight bundled HTTPS range feeds.
+- No advisory is open against any lockfile in the OSV database.
+
+Not run in this pass: arm64, the browser suite, the Redis suites, the
+performance suite and the release workflow's double-build comparison.

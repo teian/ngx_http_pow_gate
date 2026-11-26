@@ -50,6 +50,11 @@ package so an unattended upgrade cannot replace nginx underneath the module.
 - **Restart with the default in-memory ledger:** outstanding clearances and
   challenges are invalidated; everyone solves once more. A graceful reload does
   not have this effect.
+- **With `pow_gate_state_file <file>;`** in `http {}`: clearances survive the
+  restart. Only clients that were in the middle of a challenge solve again.
+  Use your service manager's restart; during nginx's binary-upgrade procedure
+  the old and new processes each keep their own ledger until the old workers
+  exit.
 - **With [Redis](Howto-Run-several-gateways-with-Redis):** clearances survive
   the restart, and gateways can be upgraded one at a time.
 - **A new solver** is picked up automatically; its URL is content-hashed.

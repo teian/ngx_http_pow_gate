@@ -838,7 +838,7 @@ pow_gate_load_percent 5
 `pow_gate_requests_total` counts each gated request once, under the final
 `$pow_gate_result` / `$pow_gate_reason` pair it is logged with; requests in
 locations where the gate is off are not counted. The counters live in a
-128 KiB shared-memory zone: they cover all workers of the instance, survive a
+256 KiB shared-memory zone: they cover all workers of the instance, survive a
 graceful reload and start at zero after a full restart. Each nginx instance
 reports its own numbers, also with the Redis backend. A request that nginx
 redirects internally before logging (for example to an `error_page`) is

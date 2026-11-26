@@ -826,7 +826,7 @@ location = /pow_gate_status {
 ```
 
 ```text
-pow_gate_build_info{version="0.6.2"} 1
+pow_gate_build_info{version="0.7.0"} 1
 pow_gate_requests_total{result="bypass",reason="clearance"} 48213
 pow_gate_requests_total{result="challenge",reason="no_clearance"} 912
 pow_gate_requests_total{result="accepted",reason="pow"} 877

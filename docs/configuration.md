@@ -7,12 +7,18 @@ gate.
 
 - [Quick map](#quick-map)
 - [Core directives](#core-directives)
+- [Clearance-cookie directives](#clearance-cookie-directives)
 - [Decision values](#decision-values)
 - [The `pow_gate_verifier` block](#the-pow_gate_verifier-block)
 - [Inheritance & how `off` wins](#inheritance--how-off-wins)
 - [Recipes](#recipes)
 - [Tuning `pow_gate_difficulty`](#tuning-pow_gate_difficulty)
 - [Common mistakes](#common-mistakes)
+- [Scoped cookie names and migration (0.5.0)](#scoped-cookie-names-and-migration-050)
+- [Crawler feed freshness](#crawler-feed-freshness)
+- [Outcome logging](#outcome-logging)
+- [Optional ASN policy](#optional-asn-policy)
+- [Redis backend](#redis-backend)
 
 ---
 
@@ -37,18 +43,22 @@ gate.
 | `pow_gate_replay`          | http, server, location    | `on`\|`off`  | `on`        | `LocationConf.replay`           |
 | `pow_gate_replay_max_body` | http, server, location    | `<size>`     | `1m`        | `LocationConf.replay_max_body`  |
 | `pow_gate_cookie_name`     | http, server, location    | `<name>`     | `pow_clearance` | `LocationConf.cookie_name`  |
+| `pow_gate_cookie_scope_suffix` | http, server, location | `on`\|`off` | `on` | [Scope-derived cookie-name suffix](#scoped-cookie-names-and-migration-050) |
 | `pow_gate_cookie_domain`   | http, server, location    | `<domain>`   | host-only   | `LocationConf.cookie_domain`    |
 | `pow_gate_cookie_path`     | http, server, location    | `<path>`     | `/`         | `LocationConf.cookie_path`      |
 | `pow_gate_cookie_samesite` | http, server, location    | `Lax\|Strict\|None` | `Lax` | `LocationConf.cookie_samesite`   |
 | `pow_gate_cookie_secure`   | http, server, location    | `on`\|`off`  | `on`        | `LocationConf.cookie_secure`    |
 | `pow_gate_cookie_httponly` | http, server, location    | `on`\|`off`  | `on`        | `LocationConf.cookie_httponly`  |
 | `pow_gate_verifier <name>` | http (block)      | `{ … }`      | —           | `MainConf.verifiers`       |
+| `pow_gate_redis`           | http (block)      | `{ … }`      | (absent: shared memory) | [Redis redemption backend](#redis-backend) |
 
 Defaults marked `—` are required when the feature is used. **Every directive
-except the `pow_gate_verifier` block inherits** down `http → server → location`
+except the `pow_gate_verifier` and `pow_gate_redis` blocks inherits** down
+`http → server → location`
 and can be overridden at any level (standard nginx merge, just like `proxy_*`).
 The verifier block stays `http`-only because it registers a *global* named
-allowlist referenced by `verify:<name>` from anywhere. The command table that
+allowlist referenced by `verify:<name>` from anywhere; the Redis block is
+instance-wide. The command table that
 encodes these contexts lives in [`src/config.rs`](../src/ngx-http-pow-gate/src/config.rs).
 
 ---
@@ -407,9 +417,12 @@ with reason.
 
 > Default: `pow_clearance`
 
-The cookie name. The same name is used when *reading* the cookie on later
+The cookie **base** name. The same name is used when *reading* the cookie on later
 requests, so changing it does not strand existing clients beyond one re-solve.
-Use this to avoid collisions or to obscure the mechanism.
+Use this to avoid collisions or to obscure the mechanism. With
+`pow_gate_cookie_scope_suffix on` (the default) the effective name is this base
+plus a scope-derived suffix — see
+[Scoped cookie names](#scoped-cookie-names-and-migration-050).
 
 ### `pow_gate_cookie_domain <domain>;`
 
@@ -552,6 +565,7 @@ Inner directives:
 | ------------------- | -------------------- | ------------------------------------------------------------- |
 | `ip_ranges_url`     | `<url>` (repeatable) | Official JSON IP-range feed to fetch and merge.               |
 | `ip_ranges_refresh` | `<time>`             | How often to re-fetch the feeds (e.g. `12h`).                 |
+| `ip_ranges_max_stale` | `<time>`           | How long a feed's last good snapshot stays valid without a successful refresh (default `48h`; see [Crawler feed freshness](#crawler-feed-freshness)). |
 | `fcrdns_suffix`     | `<suffix> …`         | Allowed reverse-DNS suffixes (matched on a DNS **label boundary**). |
 | `fcrdns_ttl`        | `<time>`             | How long to cache an FCrDNS verdict per IP.                   |
 

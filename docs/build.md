@@ -222,15 +222,25 @@ signature**, so you can prove a downloaded module was built from this source by
 this project's CI — and, if you want zero trust in the CI, rebuild it yourself
 and compare hashes.
 
-Four `.so`s are released — one per `{libc × arch}`. Pick the one matching your
-nginx's libc **and** CPU (`uname -m`: `x86_64` → amd64, `aarch64` → arm64):
+Eight `.so`s are released — one per `{nginx channel × libc × arch}`, for the
+pinned nginx **mainline and stable** versions. The file name carries both
+version axes and the platform (see [releasing.md](releasing.md#artifact-naming)):
 
-| Artifact                                  | For                                       | Built on            |
-| ----------------------------------------- | ----------------------------------------- | ------------------- |
-| `ngx_http_pow_gate_module-glibc-amd64.so` | Debian/Ubuntu/RHEL nginx (glibc), x86_64  | Debian trixie/amd64 |
-| `ngx_http_pow_gate_module-glibc-arm64.so` | Debian/Ubuntu/RHEL nginx (glibc), aarch64 | Debian trixie/arm64 |
-| `ngx_http_pow_gate_module-musl-amd64.so`  | Alpine nginx (`nginx:alpine`), x86_64     | Alpine/amd64        |
-| `ngx_http_pow_gate_module-musl-arm64.so`  | Alpine nginx (`nginx:alpine`), aarch64    | Alpine/arm64        |
+```text
+ngx_http_pow_gate_module-<module-version>-nginx<nginx-version>-<libc>-<arch>.so
+```
+
+Pick the one matching your nginx version (`nginx -v`, exact match required),
+its libc **and** CPU (`uname -m`: `x86_64` → amd64, `aarch64` → arm64):
+
+| `<libc>-<arch>` | For                                       | Built on            |
+| --------------- | ----------------------------------------- | ------------------- |
+| `glibc-amd64`   | Debian/Ubuntu/RHEL nginx (glibc), x86_64  | Debian trixie/amd64 |
+| `glibc-arm64`   | Debian/Ubuntu/RHEL nginx (glibc), aarch64 | Debian trixie/arm64 |
+| `musl-amd64`    | Alpine nginx (`nginx:alpine`), x86_64     | Alpine/amd64        |
+| `musl-arm64`    | Alpine nginx (`nginx:alpine`), aarch64    | Alpine/arm64        |
+
+Each release's notes list the exact file names with download links.
 
 ### Reproducible build
 
@@ -246,21 +256,28 @@ Rebuild and compare against a published artifact. Build **on the same arch** as
 the target (CI uses native amd64/arm64 runners); to reproduce a different arch
 locally, add `--platform linux/arm64` and have QEMU/binfmt set up.
 
+Check out the release tag first, so the module version and nginx pins match
+the published artifact. `build-nginx.sh` takes the channel (`mainline` or
+`stable`) and passes that channel's pins to the Dockerfile:
+
 ```bash
+git checkout v<module-version>
+
 # glibc (Debian trixie), native arch
-docker build -f docker/Dockerfile --target module-export-debian \
-  --output type=local,dest=dist-glibc .
+./scripts/build-nginx.sh mainline --target module-export-debian \
+  --output type=local,dest=dist-glibc
 sha256sum dist-glibc/ngx_http_pow_gate_module.so
 
 # musl (Alpine), native arch
-docker build -f docker/Dockerfile --target module-export-alpine \
-  --output type=local,dest=dist-musl .
+./scripts/build-nginx.sh mainline --target module-export-alpine \
+  --output type=local,dest=dist-musl
 sha256sum dist-musl/ngx_http_pow_gate_module.so
-# compare to the matching <libc>-<arch> line in the release's SHA256SUMS
+# compare to the matching nginx<version>-<libc>-<arch> line in the release's SHA256SUMS
 ```
 
 CI enforces this on every release: the `reproducible` job builds each `.so`
-(per `{libc × arch}`) **twice, independently** and fails if the two hashes differ.
+(per `{nginx channel × libc × arch}`) **twice, independently** and fails if the
+two hashes differ.
 
 > Residual non-determinism to watch: the exact `clang-19` *patch* version still
 > comes from the distro mirror (apt on trixie, apk on Alpine). For full
@@ -277,7 +294,8 @@ Each release `.so` has a build-provenance attestation tying it to the workflow,
 commit, and repo. Verify with the GitHub CLI (use the file you downloaded):
 
 ```bash
-gh attestation verify ngx_http_pow_gate_module-glibc-amd64.so --repo <owner>/ngx_pow
+module=ngx_http_pow_gate_module-<module-version>-nginx<nginx-version>-glibc-amd64.so
+gh attestation verify "$module" --repo teian/ngx_http_pow_gate
 ```
 
 ### Verify the cosign signature
@@ -286,21 +304,22 @@ The `.so`s are signed keyless via Sigstore (the workflow's OIDC identity, no
 long-lived key). Each has its own `.sig` + `.pem`:
 
 ```bash
-so=ngx_http_pow_gate_module-glibc-amd64.so   # or -glibc-arm64 / -musl-amd64 / -musl-arm64
+so=ngx_http_pow_gate_module-<module-version>-nginx<nginx-version>-glibc-amd64.so
 cosign verify-blob \
   --certificate "${so}.pem" \
   --signature   "${so}.sig" \
-  --certificate-identity-regexp "https://github.com/<owner>/ngx_pow/.github/workflows/release.yml@.*" \
+  --certificate-identity "https://github.com/teian/ngx_http_pow_gate/.github/workflows/release.yml@refs/tags/v<module-version>" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   "$so"
 ```
 
 ### Checksum
 
-`SHA256SUMS` is attached to every release:
+`SHA256SUMS` is attached to every release and covers all eight modules. With
+only your module downloaded:
 
 ```bash
-sha256sum -c SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
 ```
 
 

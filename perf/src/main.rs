@@ -11,7 +11,8 @@
 //! verifier microbenchmarks and comparison methodology are in docs/performance.md.
 //!
 //! Env: BASE_URL (default http://localhost:8080), PERF_DURATION secs (default 5),
-//!      PERF_CONCURRENCY (default 8), PERF_MODES (csv, default all).
+//!      PERF_CONCURRENCY (default 8), PERF_MODES (csv; default baseline,challenge,cleared,proof;
+//!      `solve` runs one full challenge-solve-redeem per iteration).
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
 use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
@@ -49,41 +50,47 @@ struct Identity {
 }
 
 fn handshake(base: &str) -> Identity {
+    try_handshake(&ureq::agent(), base).expect("handshake")
+}
+
+/// The whole solve: fetch a challenge, find a nonce, redeem it for a
+/// clearance. `None` on any refusal or transport error.
+fn try_handshake(agent: &ureq::Agent, base: &str) -> Option<Identity> {
     let sk = SigningKey::generate();
     let pk = VerifyingKey::from(&sk)
         .to_sec1_point(false)
         .as_bytes()
         .to_vec();
 
-    let ch: Challenge = ureq::get(&format!("{base}/.pow/challenge"))
+    let ch: Challenge = agent
+        .get(&format!("{base}/.pow/challenge"))
         .header("X-Pow-Key", &B64.encode(&pk))
         .call()
-        .expect("challenge")
+        .ok()?
         .body_mut()
         .read_json()
-        .expect("challenge json");
+        .ok()?;
     let mut nonce = 0u64;
     while !solution_valid(&ch.salt, nonce, ch.difficulty) {
         nonce += 1;
     }
-    let res = ureq::post(&format!("{base}/.pow/verify")).send_json(serde_json::json!({
+    let res = agent.post(&format!("{base}/.pow/verify")).send_json(serde_json::json!({
         "version": ch.version, "difficulty": ch.difficulty,
         "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&ch.token).as_bytes()))),
         "salt": ch.salt, "exp": ch.exp, "token": ch.token,
         "nonce": nonce, "pubkey": B64.encode(&pk),
     }));
     let set_cookie = res
-        .expect("verify")
+        .ok()?
         .headers()
         .get("set-cookie")
-        .and_then(|value| value.to_str().ok())
-        .expect("set-cookie")
+        .and_then(|value| value.to_str().ok())?
         .to_string();
     let cookie = set_cookie.split(';').next().unwrap_or("").to_string();
-    Identity {
+    Some(Identity {
         cookie,
         signing: sk,
-    }
+    })
 }
 
 fn proof_header(id: &Identity, method: &str, path: &str) -> String {
@@ -98,6 +105,9 @@ enum Mode {
     Challenge,
     Cleared,
     Proof,
+    /// One full solve per iteration: challenge, nonce search, redemption.
+    /// Not in the default set; it measures the client's solving work as well.
+    Solve,
 }
 
 impl Mode {
@@ -107,6 +117,7 @@ impl Mode {
             Mode::Challenge => "challenge",
             Mode::Cleared => "cleared",
             Mode::Proof => "proof",
+            Mode::Solve => "solve",
         }
     }
     fn parse(s: &str) -> Option<Mode> {
@@ -115,6 +126,7 @@ impl Mode {
             "challenge" => Mode::Challenge,
             "cleared" => Mode::Cleared,
             "proof" => Mode::Proof,
+            "solve" => Mode::Solve,
             _ => return None,
         })
     }
@@ -124,6 +136,10 @@ impl Mode {
 /// returns its latency, or None on error.
 fn one_request(agent: &ureq::Agent, base: &str, mode: Mode, id: &Identity) -> Option<Duration> {
     let t = Instant::now();
+    if matches!(mode, Mode::Solve) {
+        let solved = try_handshake(agent, base)?;
+        return solved.cookie.contains('=').then(|| t.elapsed());
+    }
     let res = match mode {
         Mode::Baseline => agent.get(&format!("{base}/healthz")).call(),
         Mode::Challenge => agent
@@ -139,6 +155,7 @@ fn one_request(agent: &ureq::Agent, base: &str, mode: Mode, id: &Identity) -> Op
             .header("Cookie", &id.cookie)
             .header("X-Pow-Proof", &proof_header(id, "GET", "/"))
             .call(),
+        Mode::Solve => unreachable!("handled above"),
     };
     let response = res.ok()?;
     if response.status() != 200 {
@@ -154,6 +171,7 @@ fn one_request(agent: &ureq::Agent, base: &str, mode: Mode, id: &Identity) -> Op
         Mode::Baseline => b"ok",
         Mode::Challenge => b"solver.js",
         Mode::Cleared | Mode::Proof => b"upstream-content",
+        Mode::Solve => unreachable!("handled above"),
     };
     let valid = match mode {
         Mode::Baseline => preview == b"ok" || preview == b"ok\n",

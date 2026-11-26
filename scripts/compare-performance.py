@@ -82,6 +82,7 @@ def measure(args, module, label, round_number, mode):
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
+        extra = (args.after_directive or "") if label == "after" else ""
         config = root / "nginx.conf"
         config.write_text(f"""load_module {root}/module.so;
 worker_processes {args.workers};
@@ -92,6 +93,7 @@ http {{ access_log off;
  pow_gate_hmac_key_file {root}/key;
  pow_gate_cookie_secure off;
  pow_gate_difficulty 2000;
+ {extra}
  server {{ listen 127.0.0.1:{port};
   location / {{ pow_gate on; root {root}; try_files /index.html =404; }}
   location = /healthz {{ pow_gate off; root {root}; }}
@@ -108,6 +110,7 @@ http {{ access_log off;
             raise RuntimeError("nginx did not write its pid file")
         master = int((root / "nginx.pid").read_text())
         try:
+            time.sleep(args.settle_seconds)
             children = Path(f"/proc/{master}/task/{master}/children")
             for _ in range(100):
                 pids = children.read_text().split()
@@ -174,10 +177,15 @@ def main():
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--server-cpus", type=cpu_set, help="Linux CPU list, e.g. 0,2-3")
     parser.add_argument("--client-cpus", type=cpu_set)
-    parser.add_argument("--modes", nargs="+", choices=["baseline", "challenge", "cleared", "proof"],
+    parser.add_argument("--modes", nargs="+", choices=["baseline", "challenge", "cleared", "proof", "solve"],
                         default=["baseline", "challenge", "cleared", "proof"])
     parser.add_argument("--warmup-seconds", type=int, default=0,
                         help="run the after module's proof mode before collecting samples")
+    parser.add_argument("--after-directive",
+                        help="extra http-level configuration for the after runs only, "
+                             "to compare one module with and without a directive")
+    parser.add_argument("--settle-seconds", type=float, default=0,
+                        help="wait after nginx starts, before the client connects")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if platform.system() != "Linux" or platform.machine().lower() not in ("x86_64", "amd64"):
@@ -191,6 +199,7 @@ def main():
         parser.error("warmup seconds must not be negative")
     validate_affinity(args, parser)
     data = {"platform": "linux/amd64", "seconds": args.seconds,
+            "after_directive": args.after_directive, "settle_seconds": args.settle_seconds,
             "concurrency": concurrencies[0] if len(concurrencies) == 1 else None,
             "concurrencies": concurrencies, "workers": args.workers, "modes": args.modes,
             "server_cpus": sorted(args.server_cpus) if args.server_cpus is not None else None,

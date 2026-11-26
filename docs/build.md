@@ -205,6 +205,7 @@ at config-test time, before you touch live traffic.
 | `module ... is not binary compatible`                | Built against a different nginx version/flags. Rebuild to match `nginx -V`. |
 | `dlopen() ... undefined symbol`                      | Missing/extra nginx module in `configure` args, or wrong nginx source.      |
 | `cannot find -lclang` / bindgen errors               | Install `libclang-dev` (Debian) / `clang-devel` (Fedora).                   |
+| `rustc … is not supported by the following package`  | The toolchain is older than Rust 1.88, which the crypto crates need. `rustup update stable`. |
 | build can't locate nginx source                      | Set `NGINX_SOURCE_DIR`, or build `--features ngx/vendored` (downloads `NGX_VERSION`, default 1.31.10). |
 | `load_module` → `unknown directive`                  | `load_module` must be in the **main** context, above `http {}`.             |
 | 403 for everyone behind a load balancer              | Configure `set_real_ip_from` / `real_ip_header` so `$remote_addr` is real.  |
@@ -248,7 +249,7 @@ The [`docker/Dockerfile`](../docker/Dockerfile) `module-build-debian` /
 `module-build-alpine` stages are deterministic: base images are pinned by
 **digest**, the nginx source by **SHA256**, every crate by the committed
 **`Cargo.lock`**, `clang`/`libclang` to a major version (bindgen output depends on
-it), and the build sets `SOURCE_DATE_EPOCH`, `CARGO_INCREMENTAL=0`,
+it: clang 19 on Debian trixie, clang 20 on Alpine 3.24), and the build sets `SOURCE_DATE_EPOCH`, `CARGO_INCREMENTAL=0`,
 `codegen-units=1`, and `--remap-path-prefix` (no absolute paths leak in). Same
 inputs → byte-identical output.
 

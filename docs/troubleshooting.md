@@ -94,3 +94,59 @@ same-origin file; no `blob:` needed).
 The last-resort fallback (pure-JS hasher fails its startup self-test) uses
 `crypto.subtle` per hash and is ~30× slower still — if you ever see that,
 something is very wrong with the client's JS engine, not with the gate.
+
+---
+
+## `nginx -t`: `unexpected "{"` inside a `map`
+
+A regex that contains braces must be quoted, or nginx reads `{` as the start of
+a block:
+
+```nginx
+map $pow_gate_load $pow_scale {
+    default           1;
+    "~^\d{3,}$"       4;     # quoted: the pattern contains {3,}
+}
+```
+
+The bundled examples already quote such patterns.
+
+## nginx does not start: `pow_gate_state_file`
+
+The error log or the service's stderr shows a line starting with
+`[pow_gate] pow_gate_state_file:`.
+
+| Message | Cause / fix |
+| ------- | ----------- |
+| `cannot read "<file>"` | The master process cannot open the file. Check ownership and the directory's permissions. |
+| `cannot write "<file>"` | The directory does not exist or is not writable by the master process. The file is created on first start. |
+| `is not a pow_gate state file` | The file does not hold the 64 hex characters the module wrote. Restore it from backup, or delete it and accept one fresh solve per client. |
+
+nginx refuses to start instead of continuing with a new identity, because that
+would silently drop every clearance, which is what the directive is there to
+prevent.
+
+## Everyone solved again after a restart
+
+Without `pow_gate_state_file` or Redis this is expected: a full restart creates
+a new store and outstanding clearances no longer match it. A graceful reload
+does not have this effect. With the state file set, only clients that were in
+the middle of a challenge during the restart solve again.
+
+Other causes of a mass re-solve: the HMAC key was replaced, `pow_gate_policy`
+was renamed, or a cookie-scope setting changed (domain, path, flags, endpoint,
+address prefixes), which renames the cookie.
+
+## `pow_gate_status` shows no `pow_gate_requests_total` lines
+
+Counters appear the first time an outcome happens, so a freshly started
+instance lists only `pow_gate_build_info` and the load gauges. Requests where
+the gate is `off` are not counted. The counters reset on a full restart and
+survive a reload.
+
+## A shared link shows no preview
+
+Preview fetchers run no JavaScript and are challenged like any other client.
+Admit them explicitly with
+[examples/link-previews.conf](../examples/link-previews.conf); see
+[configuration.md › Link previews](configuration.md#link-previews).

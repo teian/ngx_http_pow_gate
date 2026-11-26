@@ -23,6 +23,29 @@ set the value explicitly.
 Raise the price for suspicious clients only, instead of for everyone:
 [Block or slow down crawlers](Howto-Block-or-slow-down-crawlers).
 
+### Raise it only while the server is busy
+
+`$pow_gate_load` is the one-minute load average as a percentage of the CPUs
+(100 = all busy). Map it to a multiplier:
+
+```nginx
+map $pow_gate_load $pow_scale {
+    default                  1;
+    ~^(1[5-9]\d|2\d\d)$     2;     # 150–299 %
+    "~^([3-9]\d\d|\d{4,})$" 4;     # 300 % and up
+}
+
+location / {
+    pow_gate                  on;
+    pow_gate_difficulty       500000;
+    pow_gate_difficulty_scale $pow_scale;
+}
+```
+
+The multiplier applies to new challenges only. Visitors who are already cleared
+are not challenged again when load rises. A complete include is in
+[examples/load-adaptive.conf](https://github.com/teian/ngx_http_pow_gate/blob/main/examples/load-adaptive.conf).
+
 ### Solves are much slower than the table
 
 A `Content-Security-Policy` that does not allow `worker-src 'self'` stops the

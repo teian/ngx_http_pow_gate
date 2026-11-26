@@ -88,15 +88,16 @@ sequenceDiagram
     participant Ng as nginx (config load)
     participant Mod as pow_gate module
 
-    Ng->>Mod: create_main_conf()      %% MainConf = just the verifier registry
+    Ng->>Mod: create_main_conf()      %% MainConf = instance-wide state (verifiers, zones, Redis)
     Ng->>Mod: create_location_conf()  (per location)  %% all tunables + UNSET sentinels
     Note over Ng,Mod: parse directives via the command table<br/>(set_flag/str/num/sec/complex_value slots)
     Ng->>Mod: pow_gate_verifier { } block handler  %% build named Verifier (global)
     Ng->>Mod: merge_location_conf(parent, child)  (per location)
     Note over Mod: inheritance http→server→location for<br/>every knob; pow_gate off wins locally;<br/>load+cache challenge page once
-    Ng->>Mod: postconfiguration()     %% install pow_gate_access on ACCESS phase
+    Ng->>Mod: postconfiguration()     %% ACCESS handler, LOG-phase counter, shared-memory zones
+    Note over Ng: zone init: reuse on reload, else create<br/>(restore the issuer from pow_gate_state_file)
     Note over Ng: worker fork
-    Ng->>Mod: init_process()  (per worker)  %% load HMAC key(s), start range refreshers
+    Ng->>Mod: init_process()  (per worker)  %% attach zones, load HMAC key(s), start range refreshers
 ```
 
 Key points:
@@ -106,8 +107,9 @@ Key points:
   "explicitly set". This is what makes inheritance work.
 - **Almost every directive lives in `LocationConf`**, so it is valid in
   `http`/`server`/`location` and inherits downward (set once high, override low) —
-  the same model as `proxy_*`. `MainConf` holds *only* the global verifier
-  registry. `merge_location_conf` resolves every knob with its documented default.
+  the same model as `proxy_*`. `MainConf` holds only what is instance-wide: the
+  verifier registry, the Redis settings, the state-file path and the two
+  shared-memory zones. `merge_location_conf` resolves every knob with its documented default.
   Each location owns a small config-pool cache. On its first request in a worker,
   it stores resolved strings, the pre-serialized policy scope, and the initialized
   HMAC key schedule. The key is still loaded after fork under worker permissions;
@@ -118,7 +120,37 @@ Key points:
 - The **challenge page is loaded and cached once** at merge time, not per
   request.
 - **`postconfiguration`** is the only place the handler can be registered,
-  because the phase arrays don't exist until the whole HTTP block is parsed.
+  because the phase arrays don't exist until the whole HTTP block is parsed. It
+  also reserves the two shared-memory zones and adds a LOG-phase handler that
+  counts each request's final outcome.
+
+### Shared memory
+
+| Zone | Size | Holds |
+| ---- | ---- | ----- |
+| `pow_gate_redemptions_v2` | 2 MiB | the store's random issuer, a clock high-water mark and the one-use ledger; not reserved when Redis is configured |
+| `pow_gate_metrics_v1` | 128 KiB | one counter per `(result, reason)` pair |
+
+Both survive a graceful reload, because nginx hands the existing zone to the new
+configuration. On a full restart they start empty. `pow_gate_state_file` keeps
+only the issuer on disk: the restored store then refuses every challenge and
+grant issued at or before the second it started, since the ledger that could
+have recorded their redemption is gone ([security.md](security.md#restart-survival)).
+
+The counter table is append-only. A slot is claimed under the zone mutex the
+first time a pair is seen; after that a request only increments an atomic, so
+counting takes no lock on the request path.
+
+### Policy inputs the module computes
+
+`$pow_gate_score` sums the location's `pow_gate_weights` values, and
+`$pow_gate_load` is the one-minute load average as a percentage of the available
+CPUs, read from `/proc/loadavg` at most once per second per worker. Both are
+ordinary variables: a `map` turns them into a decision or into
+`pow_gate_difficulty_scale`. The scale multiplies the difficulty of **newly
+issued** challenges only. `/verify` accepts a challenge at or above the
+location's difficulty, and a clearance records the base difficulty, so a client
+that is already cleared is never challenged again because load went up.
 
 ---
 
@@ -300,6 +332,10 @@ Implementation: [`src/verifier.rs`](../src/ngx-http-pow-gate/src/verifier.rs).
 | Challenge page + `/.pow/` routes | [`src/challenge.rs`](../src/ngx-http-pow-gate/src/challenge.rs)        |
 | Captured POST replay            | [`src/replay.rs`](../src/ngx-http-pow-gate/src/replay.rs) + [`core/replay.rs`](../src/pow-gate-core/src/replay.rs) |
 | Good-bot verifier               | [`src/verifier.rs`](../src/ngx-http-pow-gate/src/verifier.rs)         |
+| One-use ledger, state file      | [`src/redemption.rs`](../src/ngx-http-pow-gate/src/redemption.rs) + [`core/redemption.rs`](../src/pow-gate-core/src/redemption.rs) |
+| Outcome variables, score        | [`src/observability.rs`](../src/ngx-http-pow-gate/src/observability.rs) |
+| Counters, status endpoint, load | [`src/metrics.rs`](../src/ngx-http-pow-gate/src/metrics.rs)           |
+| Decision grammar                | [`core/decision.rs`](../src/pow-gate-core/src/decision.rs)            |
 | Clearance cookie                | [`src/engine/clearance.rs`](../src/ngx-http-pow-gate/src/engine/clearance.rs) |
 | Per-request proof               | [`src/pow-gate-core/src/proof.rs`](../src/pow-gate-core/src/proof.rs) |
 | PoW challenge/verify math       | [`src/engine/pow.rs`](../src/ngx-http-pow-gate/src/engine/pow.rs)     |

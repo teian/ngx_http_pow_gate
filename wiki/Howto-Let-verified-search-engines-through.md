@@ -10,6 +10,10 @@ The gate verifies in two ways, and either is enough:
 - **forward-confirmed reverse DNS**: the address has a PTR name under an allowed
   suffix, and that name resolves back to the same address.
 
+The repository ships a ready-made verifier and matching `map` entries for the
+common search engines — see [Use the bundled rules](Howto-Use-the-bundled-rules).
+The steps below build the same thing by hand.
+
 ## 1. Define a verifier
 
 In `http {}`:

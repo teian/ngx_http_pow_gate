@@ -8,8 +8,9 @@
 > context, require key possession and redeem once across nginx workers. Clearances
 > use the same binding and enforce minimum difficulty. The default replay store
 > uses **2 MiB shared per nginx instance**, survives graceful reloads and fails
-> closed at capacity. Its full restarts invalidate tokens. Optional [Redis
-> coordination](docs/redis.md) supports multiple instances and survives restarts. V1 cookies/clients are not
+> closed at capacity. A full restart invalidates tokens unless
+> `pow_gate_state_file` is set. Optional [Redis coordination](docs/redis.md)
+> supports multiple instances and survives restarts. V1 cookies/clients are not
 > accepted. See [security](docs/security.md).
 >
 > Builds, CI and [releases](https://github.com/teian/ngx_http_pow_gate/releases)
@@ -30,8 +31,14 @@ module, and per–User-Agent decisions come from the built-in `map` module. The
 module only adds what stock nginx can't do: issuing/verifying proof-of-work,
 clearance cookies, and a *verified good-bot* allowlist (official IP ranges + FCrDNS).
 
+Around that core it ships the pieces an operator needs to run it: Prometheus
+counters for every outcome, ready-made crawler rules with verified allowlists,
+weighted scoring, difficulty that follows server load, and clearances that
+survive a restart.
+
 > **Status:** functional end to end, including the browser solver, good-bot
-> verifier, request replay, outcome logging and optional Redis coordination.
+> verifier, request replay, outcome logging, metrics and optional Redis
+> coordination.
 > See [testing](docs/testing.md) for the tested versions, local review results
 > and CI matrix, and the [release notes](docs/releases/) for what changed.
 
@@ -101,6 +108,18 @@ flowchart LR
 The module reads the results of the native `geo`/`map` engines as the variables
 `$pow_trusted` and `$pow_decision`, then makes the final call in the ACCESS phase.
 `NGX_DECLINED` means "I have no objection" → nginx continues to your upstream.
+
+The policy stays in your `map`, and the module gives it more to decide on:
+
+| You want to | Use | Details |
+| --- | --- | --- |
+| Start from a maintained crawler policy | the `map` includes and verifier blocks in [`rules/`](rules/) | [Bundled rules](docs/configuration.md#bundled-rules) |
+| Combine several weak signals into one decision | `pow_gate_weights` → `$pow_gate_score` | [Weighted scoring](docs/configuration.md#weighted-scoring) |
+| Charge more while the server is busy | `$pow_gate_load` → `pow_gate_difficulty_scale` | [Load-adaptive difficulty](docs/configuration.md#load-adaptive-difficulty) |
+| Keep link previews working | [`examples/link-previews.conf`](examples/link-previews.conf) | [Link previews](docs/configuration.md#link-previews) |
+| Spot clients that follow hidden links | the `{endpoint}trap` honeypot, logged as `result=honeypot` | [Honeypot](docs/configuration.md#honeypot) |
+| See what the gate is doing | `pow_gate_status;` (Prometheus text format) | [Metrics](docs/configuration.md#metrics) |
+| Keep clearances across a restart without Redis | `pow_gate_state_file` | [Surviving a restart](docs/configuration.md#surviving-a-restart) |
 
 ---
 
@@ -448,14 +467,14 @@ ngx_http_pow_gate/
 │   ├── challenge-nojs.html        embedded no-JS (meta-refresh) page
 │   └── solver.js                  browser solver (keygen, PoW loop, verify, proof)
 ├── docker/                       Dockerfile (multi-stage) · nginx-versions.json (pins)
-│                                 · nginx.test.conf · nginx.dev.conf
+│                                 · nginx.test.conf · nginx.rules.conf · nginx.dev.conf
 ├── docker-compose.{test,dev,perf}.yml   live e2e · manual sandbox · load test
 ├── rules/                        bundled map includes + verifier blocks
 ├── examples/                     nginx.conf (full, commented) · asn-policy ·
 │                                 regular-traffic-limits · solver-gzip · scoring ·
 │                                 load-adaptive · link-previews · metrics
 ├── scripts/                      test.sh · dev.sh · perf.sh · build-nginx.sh ·
-│                                 update-nginx.sh · redis-epoch.py
+│                                 update-nginx.sh · redis-epoch.py · robots2map.py
 ├── wiki/                         how-to pages, published to the GitHub wiki
 ├── .github/workflows/            ci · module-amd64/arm64 · nginx-update · release · wiki
 └── docs/  architecture · configuration · build · protocol · security · redis ·
@@ -515,8 +534,9 @@ cp target/release/libngx_http_pow_gate.so \
 > version and `./configure` arguments** as the nginx that loads it, or nginx
 > refuses it (`module ... is not binary compatible`). Check `nginx -V`.
 
-Full instructions (toolchain, env vars, Docker build, matching `nginx -V`,
-troubleshooting) are in [docs/build.md](docs/build.md).
+Building needs Rust 1.88 or newer. Full instructions (toolchain, env vars,
+Docker build, matching `nginx -V`, troubleshooting) are in
+[docs/build.md](docs/build.md).
 
 ---
 
@@ -558,7 +578,7 @@ Performance tests run only on Linux/amd64. Dated local review results are in
 
 | Area | Evidence |
 | ---- | -------- |
-| Crypto engine — PoW, clearance, ECDSA proof, context binding, IP-ranges (`src/pow-gate-core`) | **79 portable / 80 accelerated tests** green (`cargo test -p pow-gate-core`, with/without `--features native-crypto`) |
+| Crypto engine — PoW, clearance, ECDSA proof, context binding, IP-ranges (`src/pow-gate-core`) | **80 portable / 81 accelerated tests** green (`cargo test -p pow-gate-core`, with/without `--features native-crypto`) |
 | Browser solver (`assets/solver.js`) | real WebCrypto keygen + 256-bit PoW across Web Workers + proof + IndexedDB; server-anchored clock covered by `node --test` |
 | Challenge pages (`assets/challenge.html`, `challenge-nojs.html`) | themed (light/dark) + i18n (26 languages) + clock warning; no-JS page works in lynx/w3m |
 | Challenge tiers — `challenge:js`, `challenge:<N>`, `challenge:nojs[:secs]` | difficulty HMAC-bound into the token; a weaker clearance never satisfies a stronger policy |
@@ -573,6 +593,11 @@ Performance tests run only on Linux/amd64. Dated local review results are in
 | **Challenged `POST` survives** — body captured into the page, re-issued by the solver | e2e: the payload comes back verbatim; `off` / oversized bodies fall back |
 | **Good-bot verifier** — `pow_gate_verifier {}` block, IP-range feed fetch + refresh + staleness expiry, CIDR match, FCrDNS, client-IP parse | **e2e: a `verify:<name>` UA is allowed via the live IP-range feed** |
 | Outcome variables — `$pow_gate_result`, `$pow_gate_reason`, `$pow_gate_difficulty`, `$pow_gate_cookie_name` | exercised in the native and Redis suites |
+| Metrics — `pow_gate_status`, shared-memory counters per result/reason | e2e: the counters include the outcomes the run produced |
+| Policy inputs — `pow_gate_weights` / `$pow_gate_score`, `$pow_gate_load`, `pow_gate_difficulty_scale`, `deny:<status>` | e2e: scores select the decision, a scaled challenge redeems, `deny:444` closes the connection |
+| Honeypot — hidden link to `{endpoint}trap` on the challenge page | e2e: the link is on the page, a hit answers `404` and is counted |
+| Restart survival — `pow_gate_state_file` | `restart-test.py`: clearances survive, pre-restart challenges and grants are refused |
+| Bundled rules and examples — `rules/`, `examples/` | `nginx -t` loads all of them in both smoke images |
 
 ### Known limitations
 
@@ -605,7 +630,8 @@ Performance tests run only on Linux/amd64. Dated local review results are in
 
 - **[Wiki how-tos](https://github.com/teian/ngx_http_pow_gate/wiki)** — task
   guides: install a released module, first gate, search engines, crawler policy,
-  exclusions, load balancers, Redis, challenge page, logs, upgrades. Sources in
+  bundled rules, link previews, exclusions, load balancers, Redis, challenge
+  page, logs, monitoring, upgrades. Sources in
   [`wiki/`](wiki/).
 - **[docs/architecture.md](docs/architecture.md)** — phase integration, full
   request lifecycle, the two-token security model, threat model.

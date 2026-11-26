@@ -269,6 +269,8 @@ Every directive at a glance. Full reference (contexts, defaults, edge cases) in
 | `pow_gate_ipv4_prefix`     | http, server, location    | `1..32`        | IPv4 prefix a clearance is bound to (default `32`) |
 | `pow_gate_ipv6_prefix`     | http, server, location    | `1..128`       | IPv6 prefix a clearance is bound to (default `128`; `64` tolerates privacy addresses) |
 | `pow_gate_difficulty`      | http, server, location    | `N`            | Expected hash count per solve (default `50000`)    |
+| `pow_gate_difficulty_scale` | http, server, location   | `$var`         | Multiplier for newly issued challenges, e.g. from `$pow_gate_load` (default `1`) |
+| `pow_gate_weights`         | http, server, location    | `$var …`       | Integer signals summed into `$pow_gate_score`      |
 | `pow_gate_hmac_key_file`   | http, server, location    | `<file>`       | Server secret for clearance/proof signing          |
 | `pow_gate_clearance_ttl`   | http, server, location    | `<time>`       | How long a clearance lasts (default `12h`)         |
 | `pow_gate_proof_skew`      | http, server, location    | `<time>`       | Per-request proof validity window (default `5s`)   |
@@ -283,10 +285,14 @@ Every directive at a glance. Full reference (contexts, defaults, edge cases) in
 | `pow_gate_cookie_samesite` | http, server, location    | `Lax\|Strict\|None` | Cookie `SameSite=` (default `Lax`)            |
 | `pow_gate_cookie_secure`   | http, server, location    | `on`\|`off`    | Cookie `Secure` flag (default `on`)                |
 | `pow_gate_cookie_httponly` | http, server, location    | `on`\|`off`    | Cookie `HttpOnly` flag (default `on`)              |
+| `pow_gate_cookie_partitioned` | http, server, location | `on`\|`off`    | Cookie `Partitioned` flag for gated iframes (default `off`) |
+| `pow_gate_status`          | location             | —              | Serve the outcome counters (Prometheus text format) |
+| `pow_gate_state_file`      | http                 | `<file>`       | Keep clearances across a full restart without Redis |
 | `pow_gate_verifier <name>` | http (block)         | `{ … }`        | Verified good-bot allowlist (IP ranges + FCrDNS)   |
 | `pow_gate_redis`           | http (block)         | `{ … }`        | Optional Redis backend for one-use redemption across gateways |
 
-Every directive except the two blocks **inherits** `http → server
+Every directive except the two blocks, `pow_gate_status` and
+`pow_gate_state_file` **inherits** `http → server
 → location` and can be overridden at any level — set the tunables once high up,
 flip exceptions low down. The blocks are `http`-only: `pow_gate_verifier`
 registers a global named allowlist used by `verify:<name>` from anywhere, and
@@ -309,7 +315,8 @@ cache rules instead of a fixed string. See
 The decision values understood by `pow_gate_decision`:
 
 - `allow` — let it through.
-- `deny` — `403`, no challenge.
+- `deny` — `403`, no challenge. `deny:<status>` refuses with another 4xx/5xx
+  status; `deny:444` closes the connection without a response.
 - `challenge` — must solve PoW at `pow_gate_difficulty` (the default for unknown
   clients; an empty or unparsable value is treated the same, so a `map` typo
   never opens the gate).
@@ -331,16 +338,23 @@ is forwarded upstream for this:
 
 | Variable                | Content                                                        |
 | ----------------------- | -------------------------------------------------------------- |
-| `$pow_gate_result`      | `off`, `bypass` (passed to upstream, including on a valid clearance), `deny`, `challenge` (page served), `issued` (challenge handed out), `accepted` (solution accepted, clearance minted), `rejected`, `error` or `asset` |
+| `$pow_gate_result`      | `off`, `bypass` (passed to upstream, including on a valid clearance), `deny`, `challenge` (page served), `issued` (challenge handed out), `accepted` (solution accepted, clearance minted), `rejected`, `error`, `asset` or `honeypot` (the hidden trap link was followed) |
 | `$pow_gate_reason`      | Bounded reason, e.g. `trusted`, `verified_range`, `verified_dns`, `clearance`, `no_clearance`, `feed_stale`, `proof_skew`, `challenge_expired`, `wrong_solution`, `redemption_unavailable` |
 | `$pow_gate_difficulty`  | Effective hash budget, `0` when not applicable                 |
 | `$pow_gate_cookie_name` | Effective (scoped) clearance cookie name                       |
+| `$pow_gate_score`       | Sum of the location's `pow_gate_weights` — a policy input for `map` |
+| `$pow_gate_load`        | One-minute load average as a percentage of the available CPUs  |
+| `$pow_gate_load_1m`     | Raw one-minute load average                                    |
 
 ```nginx
 log_format pow '$remote_addr "$request" $status '
                'pow=$pow_gate_result reason=$pow_gate_reason difficulty=$pow_gate_difficulty';
 access_log /var/log/nginx/pow.log pow;
 ```
+
+The same outcomes are counted across all workers and served in the Prometheus
+text format by a location with `pow_gate_status;` — see
+[docs/configuration.md › Metrics](docs/configuration.md#metrics).
 
 A steady stream of `proof_skew` or `challenge_expired` points at clients with
 wrong clocks or a custom client that ignores the server time. The full value
@@ -371,6 +385,16 @@ and failover fencing are in [docs/redis.md](docs/redis.md).
 
 Related building blocks, all plain nginx configuration:
 
+- [rules/](rules/) — maintained `map` includes and verifier blocks for AI
+  crawlers, search engines and scraping tools; `scripts/robots2map.py` converts
+  a `robots.txt`.
+- [examples/scoring.conf](examples/scoring.conf) — several weak signals summed
+  into one decision with `pow_gate_weights`.
+- [examples/load-adaptive.conf](examples/load-adaptive.conf) — a difficulty
+  surcharge for new challenges while the machine is busy.
+- [examples/link-previews.conf](examples/link-previews.conf) — rate-limited
+  passage for chat and social preview fetchers.
+- [examples/metrics.conf](examples/metrics.conf) — a private counters endpoint.
 - [examples/regular-traffic-limits.conf](examples/regular-traffic-limits.conf) —
   global request limits for cleared traffic, starting in dry-run mode.
 - [examples/asn-policy.conf](examples/asn-policy.conf) — per-ASN decisions via
@@ -404,6 +428,7 @@ ngx_http_pow_gate/
 │   │       ├── cluster.rs         Redis redemption backend (pow_gate_redis {})
 │   │       ├── verifier.rs        pow_gate_verifier {} — good-bot allowlist
 │   │       ├── observability.rs   $pow_gate_* variables + outcome logging
+│   │       ├── metrics.rs         outcome counters, pow_gate_status, system load
 │   │       └── engine/            thin nginx shell over the core (FFI seam)
 │   └── pow-gate-core/             the engine — NO nginx dep, unit-tested
 │       ├── Cargo.toml             optional `native-crypto` feature (ring)
@@ -425,8 +450,10 @@ ngx_http_pow_gate/
 ├── docker/                       Dockerfile (multi-stage) · nginx-versions.json (pins)
 │                                 · nginx.test.conf · nginx.dev.conf
 ├── docker-compose.{test,dev,perf}.yml   live e2e · manual sandbox · load test
+├── rules/                        bundled map includes + verifier blocks
 ├── examples/                     nginx.conf (full, commented) · asn-policy ·
-│                                 regular-traffic-limits · solver-gzip
+│                                 regular-traffic-limits · solver-gzip · scoring ·
+│                                 load-adaptive · link-previews · metrics
 ├── scripts/                      test.sh · dev.sh · perf.sh · build-nginx.sh ·
 │                                 update-nginx.sh · redis-epoch.py
 ├── wiki/                         how-to pages, published to the GitHub wiki
@@ -565,8 +592,9 @@ Performance tests run only on Linux/amd64. Dated local review results are in
   address changes (mobile networks, IPv6 privacy addresses) solve again; widen
   `pow_gate_ipv4_prefix` / `pow_gate_ipv6_prefix` if that is too strict.
 - The default replay ledger is per nginx instance and is lost on a full restart,
-  which invalidates outstanding clearances; at capacity it fails closed with
-  `503`. Use [Redis](docs/redis.md) for several instances or restart survival.
+  which invalidates outstanding clearances unless `pow_gate_state_file` is set;
+  at capacity it fails closed with `503`. Use [Redis](docs/redis.md) for
+  several instances.
 - `pow_gate_require_proof on` needs your own pages to sign their `fetch`/XHR
   calls, and no-JS clearances cannot sign at all — see
   [docs/configuration.md](docs/configuration.md#pow_gate_require_proof-on--off).

@@ -30,6 +30,7 @@ mod challenge;
 mod cluster;
 mod config;
 mod engine;
+mod metrics;
 mod observability;
 mod redemption;
 mod replay;
@@ -113,6 +114,10 @@ pub static mut ngx_http_pow_gate_module: ngx_module_t = ngx_module_t {
 /// the merged [`config::LocationConf`] for the matched location at request time.
 extern "C" fn postconfiguration(cf: *mut ngx::ffi::ngx_conf_t) -> ngx_int_t {
     let rc = unsafe { redemption::configure(cf) };
+    if rc != ngx::core::Status::NGX_OK.0 as ngx_int_t {
+        return rc;
+    }
+    let rc = unsafe { metrics::configure(cf) };
     if rc != ngx::core::Status::NGX_OK.0 as ngx_int_t {
         return rc;
     }

@@ -9,6 +9,7 @@ All of it is one stock nginx `map`; the gate only reads the result.
 | --- | --- |
 | `allow` | pass, no challenge |
 | `deny` | `403`, no challenge offered |
+| `deny:<status>` | another 4xx/5xx status; `deny:444` closes the connection |
 | `challenge` | proof-of-work at `pow_gate_difficulty` |
 | `challenge:<N>` | proof-of-work at difficulty `N` for this client |
 | `challenge:js` | only prove JavaScript runs; no measurable work |

@@ -27,7 +27,12 @@ const CHALLENGE_GRACE: i64 = 120;
 /// (the decision `map` evaluates identically on this request, since it keys on
 /// the same client attributes). It is HMAC-bound into the token, so /verify
 /// holds the client to exactly this value.
-pub fn issue_challenge(r: &mut Request, cfg: &Cfg, required: Assurance) -> Status {
+///
+/// `scale` (`pow_gate_difficulty_scale`, at least 1) multiplies it for this
+/// issuance only. /verify accepts any difficulty at or above the policy
+/// minimum and the clearance records the minimum, so a surcharge raises the
+/// price of a new clearance without invalidating existing ones.
+pub fn issue_challenge(r: &mut Request, cfg: &Cfg, required: Assurance, scale: u64) -> Status {
     // No usable HMAC key -> refuse rather than issue a forgeable challenge token.
     if !cfg.key_ok || (crate::cluster::enabled() && !crate::cluster::available()) {
         crate::observability::record(r, "error", "issuer_unavailable", 0);
@@ -43,6 +48,7 @@ pub fn issue_challenge(r: &mut Request, cfg: &Cfg, required: Assurance) -> Statu
     let Assurance::Pow { difficulty } = required else {
         return HTTPStatus::BAD_REQUEST.into();
     };
+    let difficulty = difficulty.saturating_mul(scale.max(1));
     let pk = runtime::header_limited(r, "x-pow-key", 87)
         .filter(|s| s.len() == 87)
         .and_then(|s| codec::unb64url(&s));
@@ -191,6 +197,7 @@ extern "C" fn verify_body(r: *mut ngx_http_request_t) {
         redirect: None,
         difficulty,
         kind: "pow",
+        lifetime: CHALLENGE_GRACE,
     };
     crate::redemption::redeem(req, &challenge.token, challenge.exp, grant);
 }

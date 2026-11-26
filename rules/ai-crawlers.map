@@ -1,0 +1,23 @@
+# AI crawlers, by User-Agent. Include inside your decision map — see
+# search-engines.map for the pattern and for how include order sets precedence.
+#
+# A User-Agent is a claim, not an identity: these rules stop crawlers that
+# announce themselves. One that pretends to be a browser falls through to
+# your default and has to solve the challenge like everyone else.
+
+# ── Model training and bulk dataset collection: refused ─────────────────────
+~*(gptbot|claudebot|claude-web|anthropic-ai|ccbot|bytespider|amazonbot)                 deny;
+~*(meta-externalagent|facebookbot|diffbot|cohere-ai|cohere-training-data-crawler)      deny;
+~*(ai2bot|omgili|imagesiftbot|timpibot|petalbot|pangubot|tiktokspider|icc-crawler)     deny;
+~*(img2dataset|dataforseobot|kangaroo\ bot|webzio-extended|youbot|iaskspider)          deny;
+
+# ── AI search indexes: verified against the operator's published ranges ─────
+# Needs the "ai_search" verifier from verifiers.conf. To refuse them instead,
+# change the value to deny.
+~*(oai-searchbot|perplexitybot)                                                         verify:ai_search;
+
+# ── Fetches on behalf of a single user ("summarise this page") ──────────────
+# Needs the "ai_user_fetch" verifier. Agents without a published range are
+# challenged, which they cannot pass; that is the safe default.
+~*(chatgpt-user|feedfetcher-google|google-read-aloud)                                   verify:ai_user_fetch;
+~*(claude-user|claude-searchbot|perplexity-user|mistralai-user|duckassistbot|meta-externalfetcher)  challenge;

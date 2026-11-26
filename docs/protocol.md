@@ -14,6 +14,7 @@ SEC1 P-256 encoding; signatures are WebCrypto's 64-byte raw `r || s` ECDSA/SHA-2
 | POST | `{endpoint}verify` | Authenticate and atomically redeem a solution |
 | GET | `{endpoint}status` | [Confirm the sent clearance](#browser-clearance-confirmation) (204 / 409) and report the server time |
 | GET | `{endpoint}pass` | Atomically redeem a no-JS grant |
+| any | `{endpoint}trap` | [Honeypot](configuration.md#honeypot): logged, answered with 404 |
 
 Unsupported methods return 405. Endpoints must resolve to the same policy and
 configuration as the protected content. For a different location's difficulty,
@@ -77,8 +78,11 @@ Send JSON (maximum 8192 bytes):
 
 Sign the exact UTF-8 string `pow-gate-redeem-v2 <token>` with the committed
 private key. All fields are required. Verification checks version, public key,
-current client/policy context, exact current issuing difficulty, HMAC, expiry,
-PoW and key possession. Only then does it atomically consume the challenge token.
+current client/policy context, a difficulty at or above the location's current
+requirement, HMAC, expiry, PoW and key possession. The difficulty can be above
+the requirement when [`pow_gate_difficulty_scale`](configuration.md#load-adaptive-difficulty)
+was in effect at issuance; the HMAC keeps a client from echoing a lower value
+than it was issued. Only then does it atomically consume the challenge token.
 The ledger key excludes the solution nonce: another valid nonce cannot redeem
 that challenge again. Invalid submissions never consume a valid challenge.
 

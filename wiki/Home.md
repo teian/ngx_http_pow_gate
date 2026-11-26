@@ -20,10 +20,13 @@ New here? Follow these three in order:
 | Deny AI crawlers or make tools pay more | [Block or slow down crawlers](Howto-Block-or-slow-down-crawlers) |
 | Pick a difficulty and clearance lifetime | [Tune difficulty and clearance lifetime](Howto-Tune-difficulty-and-clearance-lifetime) |
 | Keep APIs, webhooks, feeds and ACME reachable | [Exclude paths and APIs](Howto-Exclude-paths-and-APIs) |
+| Start from maintained crawler lists | [Use the bundled rules](Howto-Use-the-bundled-rules) |
+| Keep chat and social link previews | [Keep link previews working](Howto-Keep-link-previews-working) |
 | Run behind a load balancer or CDN | [Run behind a load balancer](Howto-Run-behind-a-load-balancer) |
 | Run more than one nginx instance | [Run several gateways with Redis](Howto-Run-several-gateways-with-Redis) |
 | Brand the "Just a moment…" page | [Customize the challenge page](Howto-Customize-the-challenge-page) |
 | See what the gate decided and why | [Read the gate logs](Howto-Read-the-gate-logs) |
+| Graph challenge and solve rates, react to load and traps | [Monitor the gate](Howto-Monitor-the-gate) |
 | Move to a new nginx or module version | [Upgrade nginx and the module](Howto-Upgrade-nginx-and-the-module) |
 | Try it locally without touching a server | [Try it in the local sandbox](Howto-Try-it-in-the-local-sandbox) |
 

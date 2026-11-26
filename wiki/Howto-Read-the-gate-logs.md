@@ -32,7 +32,8 @@ writes.
 | --- | --- | --- |
 | `off` | gate disabled for this location | `disabled` |
 | `bypass` | let through to your upstream | `trusted`, `allow`, `verified_range`, `verified_dns`, `clearance` |
-| `deny` | refused with `403` | `policy` |
+| `deny` | refused with `403`, or the status of a `deny:<status>` decision | `policy` |
+| `honeypot` | the hidden trap link on the challenge page was requested | `trap` |
 | `challenge` | a challenge page was served | `no_clearance`, `verifier_unconfirmed`, `feed_stale`, `proof_skew` |
 | `issued` | a challenge (or no-JS grant) was handed out | `pow`, `nojs` |
 | `accepted` | a solution was accepted and a clearance minted | `pow`, `nojs` |

@@ -67,6 +67,9 @@ pub unsafe extern "C" fn register(cf: *mut ngx_conf_t) -> ngx_int_t {
         "pow_gate_reason",
         "pow_gate_difficulty",
         "pow_gate_cookie_name",
+        "pow_gate_score",
+        "pow_gate_load",
+        "pow_gate_load_1m",
     ]
     .iter()
     .enumerate()
@@ -104,9 +107,21 @@ unsafe extern "C" fn get(
             number = difficulty.to_string();
             &number
         }
-        _ => crate::runtime::location_conf(r)
+        3 => crate::runtime::location_conf(r)
             .map(|lc| crate::response::as_str(&lc.cookie_effective_name))
             .unwrap_or(""),
+        4 => {
+            number = score(r).to_string();
+            &number
+        }
+        5 => {
+            number = crate::metrics::load().1.to_string();
+            &number
+        }
+        _ => {
+            number = format!("{:.2}", crate::metrics::load().0);
+            &number
+        }
     };
     let buffer = ngx_pnalloc((*r).pool, value.len()).cast::<u8>();
     if buffer.is_null() {
@@ -119,4 +134,33 @@ unsafe extern "C" fn get(
     (*v).set_no_cacheable(1);
     (*v).set_not_found(0);
     Status::NGX_OK.0
+}
+
+/// `$pow_gate_score`: the sum of this location's `pow_gate_weights` values.
+/// Each value is a signed integer; anything else counts as 0, so a `map`
+/// without a matching entry simply contributes nothing.
+unsafe fn score(r: *mut ngx_http_request_t) -> i64 {
+    let Some(lc) = crate::runtime::location_conf(r) else {
+        return 0;
+    };
+    if lc.weights.is_null() {
+        return 0;
+    }
+    let values = (*lc.weights).elts as *mut ngx_http_complex_value_t;
+    let mut total = 0i64;
+    for index in 0..(*lc.weights).nelts {
+        let mut value = ngx_str_t {
+            len: 0,
+            data: ptr::null_mut(),
+        };
+        if ngx_http_complex_value(r, values.add(index), &mut value) != Status::NGX_OK.0 {
+            continue;
+        }
+        let weight = std::str::from_utf8(crate::response::as_bytes(&value))
+            .ok()
+            .and_then(|text| text.trim().parse::<i64>().ok())
+            .unwrap_or(0);
+        total = total.saturating_add(weight.clamp(-1_000_000, 1_000_000));
+    }
+    total.clamp(-1_000_000, 1_000_000)
 }

@@ -7,6 +7,8 @@
 //! ```text
 //!   allow                    pass to upstream
 //!   deny                     403
+//!   deny:<status>            refuse with another status (400..=599; 444
+//!                            closes the connection without a response)
 //!   verify:<name>            good-bot verifier (IP ranges / FCrDNS)
 //!   challenge                JS proof-of-work, configured difficulty
 //!   challenge:<N>            JS proof-of-work, difficulty N for this client
@@ -35,7 +37,10 @@ pub enum Decision<'a> {
         delay: i64,
     },
     Allow,
-    Deny,
+    /// Refuse with `status` (`deny` is 403).
+    Deny {
+        status: u16,
+    },
     /// Good-bot verifier by name.
     Verify(&'a str),
 }
@@ -46,12 +51,20 @@ impl<'a> Decision<'a> {
     pub fn parse(s: &'a str) -> Decision<'a> {
         match s {
             "allow" => return Decision::Allow,
-            "deny" => return Decision::Deny,
+            "deny" => return Decision::Deny { status: 403 },
             "" | "challenge" => return Decision::Challenge { difficulty: None },
             _ => {}
         }
         match s.split_once(':') {
             Some(("verify", name)) if !name.is_empty() => Decision::Verify(name),
+            // A malformed status still denies: a typo must never open the gate.
+            Some(("deny", status)) => Decision::Deny {
+                status: status
+                    .parse::<u16>()
+                    .ok()
+                    .filter(|status| (400..=599).contains(status))
+                    .unwrap_or(403),
+            },
             Some(("challenge", arg)) => match arg {
                 "js" => Decision::Challenge {
                     difficulty: Some(1),
@@ -87,7 +100,12 @@ mod tests {
     #[test]
     fn plain_values() {
         assert_eq!(Decision::parse("allow"), Decision::Allow);
-        assert_eq!(Decision::parse("deny"), Decision::Deny);
+        assert_eq!(Decision::parse("deny"), Decision::Deny { status: 403 });
+        assert_eq!(Decision::parse("deny:444"), Decision::Deny { status: 444 });
+        assert_eq!(Decision::parse("deny:429"), Decision::Deny { status: 429 });
+        // out of range or junk still denies, with the default status
+        assert_eq!(Decision::parse("deny:200"), Decision::Deny { status: 403 });
+        assert_eq!(Decision::parse("deny:x"), Decision::Deny { status: 403 });
         assert_eq!(
             Decision::parse(""),
             Decision::Challenge { difficulty: None }

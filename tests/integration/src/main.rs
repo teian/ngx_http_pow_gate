@@ -718,7 +718,141 @@ fn main() {
     }
     println!("✓ cleared POST passed the gate (405 from the static upstream)");
 
+    extras(&base);
+
     println!("\nE2E PASS");
+}
+
+/// Status and body of a GET that is allowed to fail with an HTTP status.
+fn get(url: &str, headers: &[(&str, &str)]) -> (u16, String, Option<String>) {
+    let mut request = ureq::get(url);
+    for (key, value) in headers {
+        request = request.set(key, value);
+    }
+    let response = match request.call() {
+        Ok(response) | Err(ureq::Error::Status(_, response)) => response,
+        Err(error) => fail(format!("GET {url} failed: {error}")),
+    };
+    let status = response.status();
+    let header = response.header("x-pow-test-score").map(str::to_owned);
+    (status, response.into_string().unwrap_or_default(), header)
+}
+
+/// 12. deny status codes, weighted scoring, the honeypot, issue-time
+///     difficulty scaling, the partitioned cookie and the outcome counters.
+fn extras(base: &str) {
+    // 12a. deny:<status>
+    let (status, _, _) = get(&format!("{base}/"), &[("User-Agent", "ratebot")]);
+    if status != 429 {
+        fail(format!("deny:429 expected 429, got {status}"));
+    }
+    match ureq::get(&format!("{base}/")).set("User-Agent", "closebot").call() {
+        Err(ureq::Error::Transport(_)) => {}
+        other => fail(format!("deny:444 should close the connection, got {other:?}")),
+    }
+    println!("✓ deny:429 answers 429, deny:444 closes the connection");
+
+    // 12b. $pow_gate_score sums the weights; the map turns it into a decision
+    for (agent, signal, score, admitted, status) in [
+        ("plain", "", "0", false, 200),
+        ("plain", "good", "-20", true, 200),
+        ("scorebot", "good", "-15", true, 200),
+        ("scorebot", "", "5", false, 200),
+        ("scorebot", "bad", "20", false, 403),
+    ] {
+        let (got, body, header) = get(
+            &format!("{base}/scored"),
+            &[("User-Agent", agent), ("X-Test-Signal", signal)],
+        );
+        if got != status
+            || header.as_deref() != Some(score)
+            || body.contains("upstream-content") != admitted
+        {
+            fail(format!(
+                "score {agent}/{signal}: status {got}, score {header:?}, expected {status}/{score}/admitted={admitted}"
+            ));
+        }
+    }
+    println!("✓ pow_gate_weights sum into $pow_gate_score and drive the decision");
+
+    // 12c. honeypot: linked from the challenge page, answered with 404
+    let (_, page, _) = get(&format!("{base}/"), &[("User-Agent", "e2e-client")]);
+    if !page.contains("href=\"/.pow/trap\"") {
+        fail("challenge page does not carry the honeypot link");
+    }
+    let (status, _, _) = get(&format!("{base}/.pow/trap"), &[("User-Agent", "trap-follower")]);
+    if status != 404 {
+        fail(format!("honeypot expected 404, got {status}"));
+    }
+    println!("✓ honeypot link present and answered with 404");
+
+    // 12d. surcharged issuance: 3× at /challenge, still redeemable against the
+    //      unscaled policy, and the cookie is partitioned
+    let sk = SigningKey::random(&mut OsRng);
+    let pk = VerifyingKey::from(&sk).to_encoded_point(false).as_bytes().to_vec();
+    let pubkey = B64.encode(&pk);
+    let response = ureq::get(&format!("{base}/extras/.pow/challenge"))
+        .set("X-Pow-Key", &pubkey)
+        .set("User-Agent", "e2e-client")
+        .set("X-Test-Scale", "3")
+        .call()
+        .unwrap_or_else(|e| fail(format!("scaled challenge failed: {e}")));
+    let load = response.header("x-pow-test-load").unwrap_or("").to_owned();
+    let ch: Challenge = response.into_json().unwrap_or_else(|e| fail(format!("bad json: {e}")));
+    if ch.difficulty != 6000 {
+        fail(format!("scale 3 on difficulty 2000 issued {}", ch.difficulty));
+    }
+    let parts: Vec<&str> = load.split(' ').collect();
+    if parts.len() != 2 || parts[0].parse::<u64>().is_err() || parts[1].parse::<f64>().is_err() {
+        fail(format!("load variables malformed: {load:?}"));
+    }
+    let mut nonce = 0u64;
+    while !solution_valid(&ch.salt, nonce, ch.difficulty) {
+        nonce += 1;
+    }
+    let verify = ureq::post(&format!("{base}/extras/.pow/verify"))
+        .set("User-Agent", "e2e-client")
+        .send_json(ureq::json!({
+            "version": ch.version,
+            "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&ch.token).as_bytes()))),
+            "salt": ch.salt, "exp": ch.exp, "token": ch.token,
+            "nonce": nonce, "pubkey": pubkey, "difficulty": ch.difficulty,
+        }))
+        .unwrap_or_else(|e| fail(format!("scaled verify failed: {e}")));
+    let set_cookie = verify.header("set-cookie").unwrap_or("").to_owned();
+    if !set_cookie.contains("; Secure") || !set_cookie.ends_with("; Partitioned") {
+        fail(format!("cookie not partitioned: {set_cookie}"));
+    }
+    let cookie = set_cookie.split(';').next().unwrap_or("");
+    let (_, body, _) = get(
+        &format!("{base}/extras/"),
+        &[("User-Agent", "e2e-client"), ("Cookie", cookie)],
+    );
+    if !body.contains("upstream-content") {
+        fail("clearance from a surcharged challenge was not accepted");
+    }
+    println!("✓ difficulty scale applies at issuance only; cookie is Partitioned; load={load}");
+
+    // 12e. the counters saw all of it (written in the LOG phase, so allow the
+    //      last request a moment to be counted)
+    std::thread::sleep(Duration::from_millis(200));
+    let (status, metrics, _) = get(&format!("{base}/pow-metrics"), &[]);
+    if status != 200 {
+        fail(format!("/pow-metrics expected 200, got {status}"));
+    }
+    for needle in [
+        "pow_gate_build_info{version=",
+        "pow_gate_requests_total{result=\"honeypot\",reason=\"trap\"} 1",
+        "pow_gate_requests_total{result=\"deny\",reason=\"policy\"} ",
+        "pow_gate_requests_total{result=\"accepted\",reason=\"pow\"} ",
+        "pow_gate_requests_total{result=\"bypass\",reason=\"clearance\"} ",
+        "pow_gate_load_percent ",
+    ] {
+        if !metrics.contains(needle) {
+            fail(format!("metrics lack {needle:?}:\n{metrics}"));
+        }
+    }
+    println!("✓ pow_gate_status reports the outcome counters");
 }
 
 /// A form POST that never follows redirects, with the browser navigation

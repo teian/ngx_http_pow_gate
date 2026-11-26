@@ -55,6 +55,7 @@ pub fn pass(r: &mut Request, cfg: &Cfg, nojs_template: &ngx_str_t, required: Ass
                 redirect: Some(grant.path),
                 difficulty: 0,
                 kind: "nojs",
+                lifetime: nojs::NOJS_GRACE,
             };
             crate::redemption::redeem(r, &token, expires, grant)
         }

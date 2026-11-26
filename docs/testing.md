@@ -322,6 +322,7 @@ export POW_NGINX="$PWD/.nginx/nginx-1.31.7/objs/nginx"
 export POW_MODULE="$PWD/target/debug/libngx_http_pow_gate.so"
 python3 tests/pow-clearance/native-test.py "$POW_NGINX" "$POW_MODULE"
 python3 tests/pow-clearance/reload-test.py "$POW_NGINX" "$POW_MODULE"
+python3 tests/pow-clearance/restart-test.py "$POW_NGINX" "$POW_MODULE"
 python3 tests/pow-clearance/feeds-test.py "$POW_NGINX" "$POW_MODULE"
 npm ci --ignore-scripts --prefix tests/browser
 (cd tests/browser && npx playwright install chromium firefox)

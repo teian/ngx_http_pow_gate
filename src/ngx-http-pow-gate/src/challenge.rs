@@ -232,6 +232,7 @@ pub fn route_internal(
     cfg: &Cfg,
     suffix: &str,
     required: pow_gate_core::context::Assurance,
+    scale: u64,
     nojs_template: &ngx_str_t,
 ) -> Option<Status> {
     let raw = r as *mut Request as *mut ngx::ffi::ngx_http_request_t;
@@ -242,7 +243,7 @@ pub fn route_internal(
         "verify" => method == "POST",
         _ => true,
     };
-    if matches!(suffix, "challenge" | "pass" | "status" | "verify")
+    if matches!(suffix, "challenge" | "pass" | "status" | "verify" | "trap")
         || (suffix == "solver.js" && !method_ok)
     {
         crate::response::no_store(r);
@@ -251,7 +252,7 @@ pub fn route_internal(
         return Some(HTTPStatus::NOT_ALLOWED.into());
     }
     match suffix {
-        "challenge" => Some(crate::engine::pow::issue_challenge(r, cfg, required)),
+        "challenge" => Some(crate::engine::pow::issue_challenge(r, cfg, required, scale)),
         "solver.js" => {
             crate::observability::record(r, "asset", "solver", 0);
             Some(serve_solver(r))
@@ -259,8 +260,34 @@ pub fn route_internal(
         "verify" => Some(crate::engine::pow::verify_solution(r)),
         "status" => Some(status(r, cfg, required)),
         "pass" => Some(crate::engine::nojs::pass(r, cfg, nojs_template, required)),
+        "trap" => Some(trap(r)),
         _ => None,
     }
+}
+
+/// `{endpoint}trap` — the honeypot. The embedded challenge page links here
+/// from an element no browser shows and no person can reach, so a request is
+/// a client that follows every `href` it parses. The gate only reports it: as
+/// `$pow_gate_result = honeypot`, in the outcome counters, and as a WARN line
+/// in the error log (which nginx completes with `client: <address>`) for
+/// fail2ban or a similar tool to act on.
+fn trap(r: &mut Request) -> Status {
+    crate::observability::record(r, "honeypot", "trap", 0);
+    let raw = r as *mut Request as *mut ngx_http_request_t;
+    unsafe {
+        ngx::ngx_log_error!(
+            ngx::ffi::NGX_LOG_WARN,
+            (*(*raw).connection).log,
+            "pow_gate honeypot hit"
+        );
+    }
+    crate::response::send_and_finish_with_headers(
+        r,
+        HTTPStatus::NOT_FOUND,
+        "text/plain",
+        b"not found\n",
+        &[],
+    )
 }
 
 /// `GET {endpoint}status`: is the presented clearance accepted? Always carries
@@ -271,15 +298,13 @@ fn status(r: &mut Request, cfg: &Cfg, required: pow_gate_core::context::Assuranc
     let now = crate::runtime::now().to_string();
     let base = [("Cache-Control", "no-store"), ("X-Pow-Now", now.as_str())];
     match check_clearance(r, cfg, required) {
-        Clearance::Valid => {
-            crate::response::send_and_finish_with_headers(
-                r,
-                HTTPStatus::NO_CONTENT,
-                "text/plain",
-                &[],
-                &base,
-            )
-        }
+        Clearance::Valid => crate::response::send_and_finish_with_headers(
+            r,
+            HTTPStatus::NO_CONTENT,
+            "text/plain",
+            &[],
+            &base,
+        ),
         Clearance::ProofSkewed => {
             crate::observability::record(r, "rejected", "proof_skew", 0);
             let headers = [base[0], base[1], ("X-Pow-Reason", "proof_skew")];

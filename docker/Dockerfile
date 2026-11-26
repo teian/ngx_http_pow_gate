@@ -97,6 +97,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 procps 
 RUN make -C "/tmp/nginx-${NGINX_VERSION}" -j"${CARGO_BUILD_JOBS:-2}"
 RUN runuser -u nobody -- python3 /src/tests/pow-clearance/reload-test.py \
       /tmp/nginx-${NGINX_VERSION}/objs/nginx /ngx_http_pow_gate_module.so
+RUN runuser -u nobody -- python3 /src/tests/pow-clearance/restart-test.py \
+      /tmp/nginx-${NGINX_VERSION}/objs/nginx /ngx_http_pow_gate_module.so
 
 # ──────────────────────── 2b. build the module (Alpine) ──────────────────────
 FROM ${REGISTRY}/rust:${RUST_VERSION}-alpine@${RUST_ALPINE_DIGEST} AS module-build-alpine
@@ -179,6 +181,11 @@ COPY docker/www/index.html /var/www/index.html
 COPY docker/www/posted.html /var/www/posted.html
 # Fails the build if the module is ABI-incompatible or any directive won't parse.
 RUN nginx -t
+# The bundled rules and example includes must parse against this build too.
+COPY rules/ /etc/nginx/pow-rules/
+COPY examples/link-previews.conf examples/load-adaptive.conf examples/scoring.conf examples/metrics.conf /etc/nginx/pow-examples/
+COPY docker/nginx.rules.conf /etc/nginx/nginx.rules.conf
+RUN nginx -t -c /etc/nginx/nginx.rules.conf
 
 FROM ${REGISTRY}/nginx:${NGINX_VERSION}-alpine@${NGINX_ALPINE_DIGEST} AS nginx-smoke-alpine
 COPY --from=test-tls /test-tls /etc/pow/test-tls
@@ -191,6 +198,11 @@ RUN install -d /var/www \
 COPY docker/www/index.html /var/www/index.html
 COPY docker/www/posted.html /var/www/posted.html
 RUN nginx -t
+# The bundled rules and example includes must parse against this build too.
+COPY rules/ /etc/nginx/pow-rules/
+COPY examples/link-previews.conf examples/load-adaptive.conf examples/scoring.conf examples/metrics.conf /etc/nginx/pow-examples/
+COPY docker/nginx.rules.conf /etc/nginx/nginx.rules.conf
+RUN nginx -t -c /etc/nginx/nginx.rules.conf
 
 # ───────────────────────────── 4. e2e test client ────────────────────────────
 # Builds the black-box client that walks challenge → solve → verify → cleared,

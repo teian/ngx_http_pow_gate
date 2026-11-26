@@ -122,6 +122,10 @@ pub struct LocationConf {
     pub ipv4_prefix: ngx_uint_t,
     pub ipv6_prefix: ngx_uint_t,
     pub policy: ngx_str_t,
+    // pow_gate_difficulty_scale $var: issue-time multiplier (load surcharge)
+    pub difficulty_scale: *mut ngx_http_complex_value_t,
+    // pow_gate_weights $a $b …: summed into $pow_gate_score
+    pub weights: *mut ngx_array_t,
     pub endpoint: ngx_str_t, // pow_gate_endpoint <prefix>
 
     // ── captured-request replay (a POST must survive the challenge) ──
@@ -138,6 +142,7 @@ pub struct LocationConf {
     pub cookie_samesite: ngx_str_t,       // Lax|Strict|None, default: Lax
     pub cookie_secure: ngx_flag_t,        // default: on
     pub cookie_httponly: ngx_flag_t,      // default: on
+    pub cookie_partitioned: ngx_flag_t,   // default: off (CHIPS, for gated iframes)
                                           // Max-Age tracks pow_gate_clearance_ttl; no separate directive.
 }
 
@@ -148,6 +153,8 @@ pub struct LocationConf {
 #[repr(C)]
 pub struct MainConf {
     pub redemption_zone: *mut ngx_shm_zone_t,
+    pub metrics_zone: *mut ngx_shm_zone_t,
+    pub state_file: ngx_str_t,  // pow_gate_state_file <file>
     pub cluster: *mut c_void,   // optional cycle-owned Redis configuration
     pub verifiers: *mut c_void, // map<name, Verifier> built by pow_gate_verifier {}
 }
@@ -160,7 +167,7 @@ const SERVER_LOCATION: ngx_uint_t = (NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF) as n
 // ───────────────────────────── command table ─────────────────────────────────
 
 #[no_mangle]
-pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 26] = [
+pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 31] = [
     // pow_gate on|off;
     ngx_command_t {
         name: ngx_string!("pow_gate"),
@@ -373,6 +380,54 @@ pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 26] = [
         offset: offset_of!(LocationConf, cookie_httponly),
         post: ptr::null_mut(),
     },
+    // pow_gate_cookie_partitioned on|off;
+    ngx_command_t {
+        name: ngx_string!("pow_gate_cookie_partitioned"),
+        type_: HTTP_SERVER_LOCATION | NGX_CONF_FLAG as ngx_uint_t,
+        set: Some(ngx_conf_set_flag_slot),
+        conf: NGX_HTTP_LOC_CONF_OFFSET,
+        offset: offset_of!(LocationConf, cookie_partitioned),
+        post: ptr::null_mut(),
+    },
+    // pow_gate_difficulty_scale $var;  (multiplies the difficulty of NEWLY
+    // issued challenges; the clearance requirement is unchanged, so raising
+    // it under load never re-challenges clients that are already cleared.)
+    ngx_command_t {
+        name: ngx_string!("pow_gate_difficulty_scale"),
+        type_: HTTP_SERVER_LOCATION | NGX_CONF_TAKE1 as ngx_uint_t,
+        set: Some(ngx_http_set_complex_value_slot),
+        conf: NGX_HTTP_LOC_CONF_OFFSET,
+        offset: offset_of!(LocationConf, difficulty_scale),
+        post: ptr::null_mut(),
+    },
+    // pow_gate_weights $a $b …;  (integer signals, summed into $pow_gate_score)
+    ngx_command_t {
+        name: ngx_string!("pow_gate_weights"),
+        type_: HTTP_SERVER_LOCATION | NGX_CONF_1MORE as ngx_uint_t,
+        set: Some(set_weights),
+        conf: NGX_HTTP_LOC_CONF_OFFSET,
+        offset: 0,
+        post: ptr::null_mut(),
+    },
+    // pow_gate_status;  (serve the outcome counters from this location)
+    ngx_command_t {
+        name: ngx_string!("pow_gate_status"),
+        type_: (NGX_HTTP_LOC_CONF | NGX_CONF_NOARGS) as ngx_uint_t,
+        set: Some(crate::metrics::set_status),
+        conf: 0,
+        offset: 0,
+        post: ptr::null_mut(),
+    },
+    // pow_gate_state_file <file>;  (keep the local store identity across a
+    // full restart so clearances survive it — http only.)
+    ngx_command_t {
+        name: ngx_string!("pow_gate_state_file"),
+        type_: (NGX_HTTP_MAIN_CONF | NGX_CONF_TAKE1) as ngx_uint_t,
+        set: Some(ngx_conf_set_str_slot),
+        conf: NGX_HTTP_MAIN_CONF_OFFSET,
+        offset: offset_of!(MainConf, state_file),
+        post: ptr::null_mut(),
+    },
     // pow_gate_verifier <name> { ... };   global registry — http only (block).
     ngx_command_t {
         name: ngx_string!("pow_gate_verifier"),
@@ -403,6 +458,44 @@ pub static mut NGX_HTTP_POW_GATE_COMMANDS: [ngx_command_t; 26] = [
         post: ptr::null_mut(),
     },
 ];
+
+/// `pow_gate_weights $a $b …;` — compile each argument as a complex value.
+unsafe extern "C" fn set_weights(
+    cf: *mut ngx_conf_t,
+    _cmd: *mut ngx_command_t,
+    conf: *mut c_void,
+) -> *mut c_char {
+    let conf = &mut *(conf as *mut LocationConf);
+    if !conf.weights.is_null() {
+        return c"is duplicate".as_ptr().cast_mut();
+    }
+    let count = (*(*cf).args).nelts;
+    let values = (*(*cf).args).elts as *mut ngx_str_t;
+    let weights = ngx_array_create(
+        (*cf).pool,
+        count - 1,
+        std::mem::size_of::<ngx_http_complex_value_t>(),
+    );
+    if weights.is_null() {
+        return NGX_CONF_ERROR;
+    }
+    for index in 1..count {
+        let value = ngx_array_push(weights) as *mut ngx_http_complex_value_t;
+        if value.is_null() {
+            return NGX_CONF_ERROR;
+        }
+        ptr::write_bytes(value, 0, 1);
+        let mut compile: ngx_http_compile_complex_value_t = std::mem::zeroed();
+        compile.cf = cf;
+        compile.value = values.add(index);
+        compile.complex_value = value;
+        if ngx_http_compile_complex_value(&mut compile) != 0 {
+            return NGX_CONF_ERROR;
+        }
+    }
+    conf.weights = weights;
+    NGX_CONF_OK
+}
 
 // ───────────────────────── create / merge main conf ──────────────────────────
 
@@ -446,6 +539,7 @@ pub extern "C" fn create_location_conf(cf: *mut ngx_conf_t) -> *mut c_void {
         (*p).cookie_secure = NGX_CONF_UNSET as ngx_flag_t;
         (*p).cookie_scope_suffix = NGX_CONF_UNSET as ngx_flag_t;
         (*p).cookie_httponly = NGX_CONF_UNSET as ngx_flag_t;
+        (*p).cookie_partitioned = NGX_CONF_UNSET as ngx_flag_t;
         // str fields (page_path, hmac_key_file, endpoint, cookie_*) stay zeroed;
         // merge substitutes the canonical default string when inherited len == 0.
         p as *mut c_void
@@ -473,6 +567,8 @@ pub extern "C" fn merge_location_conf(
         merge_flag(&mut conf.enabled, prev.enabled, 0 /* default off */);
         merge_ptr(&mut conf.trusted, prev.trusted);
         merge_ptr(&mut conf.decision, prev.decision);
+        merge_ptr(&mut conf.difficulty_scale, prev.difficulty_scale);
+        merge_ptr(&mut conf.weights, prev.weights);
         merge_str(&mut conf.page_path, &prev.page_path, b"");
         merge_str(&mut conf.nojs_page_path, &prev.nojs_page_path, b"");
 
@@ -514,34 +610,45 @@ pub extern "C" fn merge_location_conf(
             1, /* on */
         );
 
+        merge_flag(
+            &mut conf.cookie_partitioned,
+            prev.cookie_partitioned,
+            0, /* off */
+        );
+
         let base = crate::response::as_str(&conf.cookie_name);
         let name = if conf.cookie_scope_suffix != 0 {
             let domain = crate::response::as_str(&conf.cookie_domain)
                 .trim_start_matches('.')
                 .to_ascii_lowercase();
             let same_site = crate::response::as_str(&conf.cookie_samesite).to_ascii_lowercase();
-            pow_gate_core::cookie::scoped_name(
-                base,
-                &[
-                    &domain,
-                    crate::response::as_str(&conf.cookie_path),
-                    &same_site,
-                    if conf.cookie_secure != 0 || same_site == "none" {
-                        "secure"
-                    } else {
-                        "http"
-                    },
-                    if conf.cookie_httponly != 0 {
-                        "httponly"
-                    } else {
-                        "readable"
-                    },
-                    crate::response::as_str(&conf.endpoint),
-                    crate::response::as_str(&conf.policy),
-                    &conf.ipv4_prefix.to_string(),
-                    &conf.ipv6_prefix.to_string(),
-                ],
-            )
+            let ipv4_prefix = conf.ipv4_prefix.to_string();
+            let ipv6_prefix = conf.ipv6_prefix.to_string();
+            let mut fields = vec![
+                domain.as_str(),
+                crate::response::as_str(&conf.cookie_path),
+                same_site.as_str(),
+                if conf.cookie_secure != 0 || conf.cookie_partitioned != 0 || same_site == "none" {
+                    "secure"
+                } else {
+                    "http"
+                },
+                if conf.cookie_httponly != 0 {
+                    "httponly"
+                } else {
+                    "readable"
+                },
+                crate::response::as_str(&conf.endpoint),
+                crate::response::as_str(&conf.policy),
+                &ipv4_prefix,
+                &ipv6_prefix,
+            ];
+            // Appended only when set: names of existing, unpartitioned
+            // deployments must not change on upgrade.
+            if conf.cookie_partitioned != 0 {
+                fields.push("partitioned");
+            }
+            pow_gate_core::cookie::scoped_name(base, &fields)
         } else {
             base.to_owned()
         };

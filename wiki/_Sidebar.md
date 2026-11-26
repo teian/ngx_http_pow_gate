@@ -10,6 +10,8 @@
 - [Block or slow down crawlers](Howto-Block-or-slow-down-crawlers)
 - [Tune difficulty and clearance lifetime](Howto-Tune-difficulty-and-clearance-lifetime)
 - [Exclude paths and APIs](Howto-Exclude-paths-and-APIs)
+- [Use the bundled rules](Howto-Use-the-bundled-rules)
+- [Keep link previews working](Howto-Keep-link-previews-working)
 
 **Deployment**
 - [Run behind a load balancer](Howto-Run-behind-a-load-balancer)
@@ -18,4 +20,5 @@
 
 **Operations**
 - [Read the gate logs](Howto-Read-the-gate-logs)
+- [Monitor the gate](Howto-Monitor-the-gate)
 - [Upgrade nginx and the module](Howto-Upgrade-nginx-and-the-module)

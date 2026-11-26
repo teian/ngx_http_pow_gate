@@ -76,3 +76,14 @@ fn cannot_echo_an_easier_difficulty() {
     c.difficulty = 1;
     assert_eq!(verify(&c, 0, 1005), Verdict::BadToken);
 }
+
+#[test]
+fn accepts_a_challenge_issued_above_the_required_minimum() {
+    // Load surcharge: issued at 512, the policy minimum is still 128.
+    let c = issue(512);
+    let n = solve(&c);
+    assert_eq!(
+        pow::verify_solution(KEY, &c, n, PK, CONTEXT, 128, 1005),
+        Verdict::Ok
+    );
+}

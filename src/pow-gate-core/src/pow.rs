@@ -78,7 +78,9 @@ pub fn verify_solution(
     ));
     if challenge.version != 2
         || challenge.difficulty == 0
-        || challenge.difficulty != required_difficulty
+        // A load surcharge issues above the policy minimum. Harder is fine;
+        // the HMAC stops a client from echoing an easier value than issued.
+        || challenge.difficulty < required_difficulty
         || !ct_eq(expect.as_bytes(), challenge.token.as_bytes())
     {
         return Verdict::BadToken;

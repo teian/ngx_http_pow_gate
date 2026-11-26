@@ -102,6 +102,29 @@ its time (`now` in the challenge, `X-Pow-Now`) and the client stamps proofs with
 it. `X-Pow-Now` and `X-Pow-Reason: proof_skew` are public information and give an
 attacker nothing a `Date` header does not.
 
+## Restart survival
+
+`pow_gate_state_file` restores the local store's identity after a full restart,
+so clearances stay valid. The one-use ledger is not restored. A restored store
+therefore records its start time and refuses any challenge or no-JS grant whose
+issue time (`exp` minus the fixed 120-second lifetime) is at or before it: the
+only tokens the lost ledger could have seen redeemed. `tests/pow-clearance/restart-test.py`
+checks that a clearance survives, that a spent and an outstanding pre-restart
+grant are both refused, and that a fresh grant redeems exactly once.
+
+Limits:
+
+- The cut-off uses the wall clock. If the clock is set back across the restart
+  by more than the downtime, a challenge redeemed before the restart can be
+  redeemed once more until it expires.
+- During a binary upgrade (`USR2`) the old and the new master each have their
+  own ledger but, with a state file, the same identity. Until the old workers
+  exit, one solution can be redeemed once per generation. Without a state file
+  the two generations have different identities and this cannot happen.
+- The file holds the store identity, not the HMAC key. Knowing it does not
+  allow forging a token, but it must not be shared between instances: two
+  stores with one identity each redeem a solution once.
+
 ## Operational limits
 
 Navigation cookies remain bearer credentials inside the allowed address/network

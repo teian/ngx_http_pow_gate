@@ -8,7 +8,7 @@
 //!   1. gate disabled            → DECLINED (pass straight to upstream)
 //!   2. trusted network (`geo`)  → DECLINED
 //!   3. decision == allow        → DECLINED
-//!   4. decision == deny         → 403
+//!   4. decision == deny[:code]  → 403, or the status the decision names
 //!   5. decision == verify:<n>   → run verifier; pass if it confirms the bot
 //!   6. valid clearance cookie   → DECLINED
 //!   7. otherwise                → serve the challenge page (200): the JS
@@ -75,6 +75,7 @@ ngx::http_request_handler!(pow_gate_access, |request: &mut Request| {
             cfg,
             suffix,
             required,
+            difficulty_scale(request, location_conf.difficulty_scale),
             &location_conf.nojs_page_cache,
         )
         .unwrap_or(Status::NGX_DECLINED);
@@ -92,7 +93,7 @@ ngx::http_request_handler!(pow_gate_access, |request: &mut Request| {
             record(request, "bypass", "allow", difficulty);
             return Status::NGX_DECLINED;
         }
-        Decision::Deny => return deny(request),
+        Decision::Deny { status } => return deny(request, status),
         Decision::Verify(name) => {
             if let Some(ip) = runtime::client_ip(request) {
                 let (allowed, reason) = verifier_result(name, ip);
@@ -197,11 +198,30 @@ fn is_trusted(r: &Request, cv: *mut ngx_http_complex_value_t) -> bool {
         .is_some_and(|value| value.as_bytes() == b"1")
 }
 
-/// `pow_gate_decision deny` lands here: refuse the request outright.
-fn deny(r: &mut Request) -> Status {
+/// `pow_gate_decision deny` lands here: refuse the request outright, with 403
+/// or the status a `deny:<status>` decision names. 444 is nginx's "close the
+/// connection without a response".
+fn deny(r: &mut Request, status: u16) -> Status {
     crate::response::no_store(r);
     record(r, "deny", "policy", 0);
-    ngx::http::HTTPStatus::FORBIDDEN.into()
+    Status(status as ngx_int_t)
+}
+
+/// Largest accepted `pow_gate_difficulty_scale` value.
+const MAX_DIFFICULTY_SCALE: u64 = 1024;
+
+/// `pow_gate_difficulty_scale`: a positive integer multiplier for newly issued
+/// challenges. Unset, empty, zero or unparsable means 1 — a broken `map` must
+/// not make the gate unsolvable, and it cannot weaken it below the policy.
+fn difficulty_scale(r: &Request, cv: *mut ngx_http_complex_value_t) -> u64 {
+    let Some(cv) = (unsafe { cv.as_ref() }) else {
+        return 1;
+    };
+    eval_complex_value(r, Some(cv))
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(1)
+        .clamp(1, MAX_DIFFICULTY_SCALE)
 }
 
 fn assurance_for(decision: &Decision<'_>, cfg: &runtime::Cfg) -> Assurance {

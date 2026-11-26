@@ -1,0 +1,12 @@
+# Optional: HTTP libraries and scraping frameworks that send their own name.
+# They cannot solve the JavaScript challenge anyway, so refusing them saves
+# one challenge page per request and keeps the outcome log readable.
+#
+# Do NOT include this for a decision that also covers an API or a feed that
+# scripts are meant to use; turn the gate off for those locations instead.
+# An empty User-Agent is listed last because map regexes match in order.
+
+~*(scrapy|python-requests|python-urllib|aiohttp|httpx|go-http-client|okhttp)   deny;
+~*(libwww-perl|lwp::simple|java/|apache-httpclient|node-fetch|axios|got\ \()   deny;
+~*(headlesschrome|phantomjs|puppeteer|playwright|selenium)                     deny;
+~^$                                                                            deny;

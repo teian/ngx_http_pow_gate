@@ -378,6 +378,10 @@
 
     <p class="foot" data-i18n="foot">This takes a few seconds and runs entirely in your browser.</p>
     <noscript>JavaScript is required to complete this check.</noscript>
+    <!-- Honeypot: nothing renders this and no person can reach it, so only a
+         client that follows every href it parses requests it. The module logs
+         those requests; see docs/configuration.md › Honeypot. Safe to remove. -->
+    <a href="{{endpoint}}trap" rel="nofollow" tabindex="-1" aria-hidden="true" style="display:none"></a>
   </main>
 
   <!-- Theme switcher: cycles Auto → Light → Dark, persisted. Independent of the

@@ -35,6 +35,8 @@ gate.
 | `pow_gate_ipv6_prefix` | http, server, location | `1..128` | `128` | Address binding prefix |
 | `pow_gate_policy` | http, server, location | `<name>` | `default` | Named client/clearance scope |
 | `pow_gate_difficulty`      | http, server, location    | `N`          | `50000`     | `LocationConf.difficulty`       |
+| `pow_gate_difficulty_scale` | http, server, location   | `$var`       | `1`         | [Issue-time difficulty multiplier](#load-adaptive-difficulty) |
+| `pow_gate_weights`         | http, server, location    | `$var …`     | (unset)     | [Signals summed into `$pow_gate_score`](#weighted-scoring) |
 | `pow_gate_hmac_key_file`   | http, server, location    | `<file>`     | —           | `LocationConf.hmac_key_file`    |
 | `pow_gate_clearance_ttl`   | http, server, location    | `<time>`     | `12h`       | `LocationConf.clearance_ttl`    |
 | `pow_gate_proof_skew`      | http, server, location    | `<time>`     | `5s`        | `LocationConf.proof_skew`       |
@@ -49,11 +51,15 @@ gate.
 | `pow_gate_cookie_samesite` | http, server, location    | `Lax\|Strict\|None` | `Lax` | `LocationConf.cookie_samesite`   |
 | `pow_gate_cookie_secure`   | http, server, location    | `on`\|`off`  | `on`        | `LocationConf.cookie_secure`    |
 | `pow_gate_cookie_httponly` | http, server, location    | `on`\|`off`  | `on`        | `LocationConf.cookie_httponly`  |
+| `pow_gate_cookie_partitioned` | http, server, location | `on`\|`off`  | `off`       | `LocationConf.cookie_partitioned` |
+| `pow_gate_status`          | location          | —            | —           | [Outcome counters](#metrics) |
+| `pow_gate_state_file`      | http              | `<file>`     | (unset)     | [Keep clearances across a restart](#surviving-a-restart) |
 | `pow_gate_verifier <name>` | http (block)      | `{ … }`      | —           | `MainConf.verifiers`       |
 | `pow_gate_redis`           | http (block)      | `{ … }`      | (absent: shared memory) | [Redis redemption backend](#redis-backend) |
 
 Defaults marked `—` are required when the feature is used. **Every directive
-except the `pow_gate_verifier` and `pow_gate_redis` blocks inherits** down
+except the `pow_gate_verifier` and `pow_gate_redis` blocks, `pow_gate_status`
+and `pow_gate_state_file` inherits** down
 `http → server → location`
 and can be overridden at any level (standard nginx merge, just like `proxy_*`).
 The verifier block stays `http`-only because it registers a *global* named
@@ -476,6 +482,19 @@ Adds `HttpOnly` (JavaScript cannot read the cookie). Keep `on` — the solver ne
 needs to read the clearance cookie from JS; the browser sends it automatically.
 Only turn `off` if some client-side code must inspect it (rare, discouraged).
 
+### `pow_gate_cookie_partitioned on | off;`
+
+> Default: `off`
+
+Adds `Partitioned` ([CHIPS](https://developer.mozilla.org/en-US/docs/Web/Privacy/Guides/Privacy_sandbox/Partitioned_cookies))
+and forces `Secure`, which browsers require for it. Turn it on when the gated
+site is embedded in an `<iframe>` on another site: browsers that block
+third-party cookies drop an unpartitioned clearance there, and the visitor
+loops on the challenge. Combine it with `pow_gate_cookie_samesite None`. A
+partitioned cookie is scoped to the embedding site, so the visitor solves once
+per embedding site. With the scope suffix on, switching this directive changes
+the cookie name; existing clearances are re-earned once.
+
 > **Max-Age** is not a separate directive — it tracks `pow_gate_clearance_ttl`,
 > so the cookie expires exactly when the clearance does.
 
@@ -506,6 +525,7 @@ Set-Cookie: gate_clearance=<token>; Path=/; Domain=.example.com; Max-Age=3600; S
 | ----------------------- | ---------------------------------------------------------------------- |
 | `allow`                 | Pass to upstream. No challenge.                                        |
 | `deny`                  | `403 Forbidden`. No challenge offered.                                 |
+| `deny:<status>`         | Refuse with another status from 400 to 599, for example `deny:429` or `deny:410`. `deny:444` closes the connection without sending a response. A status outside that range denies with 403. |
 | `challenge`             | Must solve PoW at the configured difficulty (unless already cleared). The default. |
 | `challenge:<N>`         | Must solve PoW at difficulty `N` — per-client cost without a separate `location`. The issued difficulty is HMAC-bound into the challenge token, so a client cannot swap in an easier one. |
 | `challenge:js`          | JS-execution proof only (difficulty 1): the keypair + verify roundtrip is the whole test, no measurable hashing. The cheap tier for clients you barely suspect. |
@@ -771,7 +791,8 @@ access_log /var/log/nginx/pow.log pow;
 ```
 
 `$pow_gate_result` is `off`, `bypass`, `deny`, `challenge`, `issued`, `accepted`,
-`rejected`, `error`, or `asset`. A request passed to the upstream is `bypass` —
+`rejected`, `error`, `asset`, or `honeypot` (a request for the
+[trap URL](#honeypot), reason `trap`). A request passed to the upstream is `bypass` —
 including one carrying a valid clearance (`reason=clearance`); `issued` is a
 challenge or no-JS grant handed out, and `accepted` is a solution that minted a
 clearance. `$pow_gate_reason` supplies a bounded reason such
@@ -789,6 +810,178 @@ or 0 when not applicable. Variables are evaluated from request-local state and
 are diagnostic output, not policy inputs. Successful issuance/acceptance also
 logs at nginx INFO level when enabled. No token, cookie, key or Redis credential
 is included in these events. Feed-refresh failures log the source index to stderr.
+
+## Metrics
+
+`pow_gate_status;` makes a location serve the gate's outcome counters in the
+Prometheus text format. It takes no argument and is valid in `location` only.
+
+```nginx
+location = /pow_gate_status {
+    pow_gate off;          # a scraper cannot solve a challenge
+    allow 127.0.0.1;
+    deny  all;
+    pow_gate_status;
+}
+```
+
+```text
+pow_gate_build_info{version="0.6.2"} 1
+pow_gate_requests_total{result="bypass",reason="clearance"} 48213
+pow_gate_requests_total{result="challenge",reason="no_clearance"} 912
+pow_gate_requests_total{result="accepted",reason="pow"} 877
+pow_gate_requests_total{result="deny",reason="policy"} 15502
+pow_gate_load1 0.42
+pow_gate_load_percent 5
+```
+
+`pow_gate_requests_total` counts each gated request once, under the final
+`$pow_gate_result` / `$pow_gate_reason` pair it is logged with; requests in
+locations where the gate is off are not counted. The counters live in a
+128 KiB shared-memory zone: they cover all workers of the instance, survive a
+graceful reload and start at zero after a full restart. Each nginx instance
+reports its own numbers, also with the Redis backend. A request that nginx
+redirects internally before logging (for example to an `error_page`) is
+counted with the outcome of the redirected request.
+
+Keep the location private. The counters show how much traffic you refuse and
+why. [examples/metrics.conf](../examples/metrics.conf) is a ready include.
+
+## Weighted scoring
+
+A `map` turns one input into one value. `pow_gate_weights` adds several of them
+up, which stock nginx cannot do:
+
+```nginx
+pow_gate_weights  $pow_weight_language $pow_weight_fetch_metadata $pow_weight_agent;
+pow_gate_decision $pow_score_decision;
+```
+
+Each argument is evaluated per request and read as a signed integer; anything
+else, including an empty value, counts as 0. The sum is exposed as
+`$pow_gate_score` (clamped to ±1,000,000), which you map to a decision:
+
+```nginx
+map $pow_gate_score $pow_score_decision {
+    default        challenge;          # 10–19
+    ~^-            allow;              # negative
+    ~^\d$          challenge:js;       # 0–9
+    ~^[2-9]\d$     challenge:400000;   # 20–99
+    "~^\d{3,}$"    deny;               # 100 and above
+}
+```
+
+Quote a regex that contains `{}`; nginx reads an unquoted brace as the start of
+a block. The directive inherits and a lower level replaces the whole list.
+`$pow_gate_score` is 0 where no weights are configured. A complete example is in
+[examples/scoring.conf](../examples/scoring.conf).
+
+## Load-adaptive difficulty
+
+Two variables report how busy the machine is:
+
+| Variable | Content |
+| --- | --- |
+| `$pow_gate_load` | One-minute load average as an integer percentage of the CPUs available to nginx; `100` means every CPU is busy |
+| `$pow_gate_load_1m` | The raw one-minute load average, two decimals |
+
+Both are read from `/proc/loadavg` at most once per second per worker and are
+`0` where that file does not exist. Load average counts runnable and
+I/O-blocked tasks on the whole machine, not only nginx.
+
+`pow_gate_difficulty_scale $var;` multiplies the difficulty of **newly issued**
+challenges by an integer from 1 to 1024. An unset, empty, zero or unparsable
+value means 1.
+
+```nginx
+map $pow_gate_load $pow_load_scale {
+    default                  1;
+    ~^1\d\d$                 2;   # 100–199 %
+    ~^[23]\d\d$              4;   # 200–399 %
+    "~^([4-9]\d\d|\d{4,})$"  8;   # 400 % and above
+}
+location / {
+    pow_gate on;
+    pow_gate_difficulty_scale $pow_load_scale;
+}
+```
+
+The clearance requirement does not change: `/verify` accepts a challenge at or
+above the location's difficulty, and the clearance records the location's
+difficulty. Raising the scale therefore makes a new clearance more expensive
+without sending visitors who already hold one back to the challenge page. Using
+`$pow_gate_load` to pick a `challenge:<N>` decision instead does re-challenge
+everyone, because that raises the requirement itself.
+
+## Honeypot
+
+The embedded challenge page contains one link that nothing renders and no
+person can reach (`display:none`, `aria-hidden`, `tabindex="-1"`,
+`rel="nofollow"`). It points at `{endpoint}trap`. A client that requests it
+follows every `href` it parses.
+
+The gate reports the request and answers `404`; it does not block anyone by
+itself:
+
+- `$pow_gate_result` is `honeypot`, `$pow_gate_reason` is `trap`;
+- the [counters](#metrics) gain `result="honeypot"`;
+- the error log gets a `warn` line that nginx completes with the client
+  address: `pow_gate honeypot hit, client: 203.0.113.9, server: …`.
+
+A fail2ban filter for that line:
+
+```ini
+[Definition]
+failregex = pow_gate honeypot hit, client: <HOST>,
+```
+
+Add `Disallow: /.pow/` to your `robots.txt` so that well-behaved crawlers never
+request it. The no-JS page carries no trap link, because text browsers show
+hidden links. A custom `pow_gate_page` has a trap only if you add the link;
+the endpoint exists either way.
+
+## Surviving a restart
+
+Without Redis, a full nginx restart creates a new redemption store with a new
+random identity, and every clearance issued before it stops verifying.
+`pow_gate_state_file <file>;` (`http` only) keeps that identity on disk:
+
+```nginx
+http {
+    pow_gate_state_file /var/lib/nginx/pow_gate.state;
+}
+```
+
+The file is created on first start (mode `0600`, owned by the user that starts
+nginx) and read on every later start. Use an absolute path in a directory that
+user can write to and that survives a reboot. If the file exists but cannot be
+read or is malformed, nginx refuses to start. Adding the directive with a
+reload records the running store's identity, so the next restart already keeps
+the clearances.
+
+The list of redeemed challenges is still lost in a restart. To keep a solution
+from being redeemed a second time, a restored store refuses every challenge
+and no-JS grant issued at or before the second it started; those clients
+solve again, at most two minutes' worth of outstanding challenges. Limits are
+in [security.md](security.md#restart-survival).
+
+The directive has no effect with `pow_gate_redis`, where Redis holds the
+store. Do not point two nginx instances at one file.
+
+## Bundled rules
+
+[`rules/`](../rules/) holds maintained `map` includes and verifier blocks: AI
+crawlers, search engines, and an optional list of HTTP libraries and headless
+browsers. See [rules/README.md](../rules/README.md).
+[`scripts/robots2map.py`](../scripts/robots2map.py) converts the
+`Disallow: /` groups of a `robots.txt` into the same format.
+
+## Link previews
+
+Preview fetchers of chat apps and social networks cannot solve a challenge.
+[examples/link-previews.conf](../examples/link-previews.conf) admits them by
+User-Agent, checks the ones whose operator owns its network against the
+client's ASN, and rate-limits all of them per address.
 
 ## Optional ASN policy
 

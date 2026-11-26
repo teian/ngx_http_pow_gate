@@ -291,6 +291,19 @@ the gate** (`pow_gate off;`) or they'll be challenged too.
 
 ---
 
+## The honeypot link
+
+The embedded page carries a hidden link to `{{endpoint}}trap`. To keep the
+[honeypot](configuration.md#honeypot) in a custom page, copy it as is:
+
+```html
+<a href="{{endpoint}}trap" rel="nofollow" tabindex="-1" aria-hidden="true" style="display:none"></a>
+```
+
+All four attributes matter: they keep the link away from sighted users,
+keyboard users, screen readers and well-behaved crawlers. Leave it out of a
+custom no-JS page; text browsers ignore the styling and show the link.
+
 ## Accessibility & no-JavaScript
 
 - Wrap the live region in `role="status"` + `aria-live="polite"` so screen

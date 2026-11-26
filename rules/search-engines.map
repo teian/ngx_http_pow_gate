@@ -1,0 +1,20 @@
+# Search-engine crawlers → verified, never trusted on the User-Agent alone.
+# Include inside the map that produces your decision variable, together with
+# verifiers.conf (which defines "search_engines"):
+#
+#     map $http_user_agent $pow_decision {
+#         default challenge;
+#         include /etc/nginx/pow-rules/ai-crawlers.map;
+#         include /etc/nginx/pow-rules/search-engines.map;
+#     }
+#
+# nginx tries map regexes in the order they appear, so the order of the
+# include lines is the precedence between the rule files.
+
+~*googlebot                 verify:search_engines;
+~*(adsbot-google|mediapartners-google|google-inspectiontool|googleother|storebot-google)  verify:search_engines;
+~*(bingbot|adidxbot|bingpreview|microsoftpreview)  verify:search_engines;
+~*duckduckbot               verify:search_engines;
+~*applebot                  verify:search_engines;
+~*yandex(bot|images|mobilebot|accessibilitybot)    verify:search_engines;
+~*baiduspider               verify:search_engines;

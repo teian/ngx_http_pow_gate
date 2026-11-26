@@ -56,6 +56,7 @@ pub struct CookieConfig {
     pub samesite: String,
     pub secure: bool,
     pub http_only: bool,
+    pub partitioned: bool,
     pub max_age_secs: i64,
 }
 
@@ -131,6 +132,7 @@ fn build_cfg(lc: &LocationConf) -> Cfg {
                 samesite: nonempty(as_str(&lc.cookie_samesite), "Lax"),
                 secure: lc.cookie_secure != 0,
                 http_only: lc.cookie_httponly != 0,
+                partitioned: lc.cookie_partitioned != 0,
                 max_age_secs: lc.clearance_ttl as i64,
             },
         }
@@ -372,7 +374,8 @@ unsafe fn read_file_range(fd: libc::c_int, buf: &mut [u8], offset: i64) -> bool 
 }
 
 /// Build a `Set-Cookie` header value from owned cookie config + a token value.
-/// `SameSite=None` forces `Secure` (browsers drop it otherwise).
+/// `SameSite=None` and `Partitioned` force `Secure` (browsers drop the cookie
+/// otherwise).
 pub fn build_set_cookie(value: &str, c: &CookieConfig) -> String {
     let mut s = format!("{}={}", c.name, value);
     s.push_str(&format!("; Path={}", c.path));
@@ -381,11 +384,14 @@ pub fn build_set_cookie(value: &str, c: &CookieConfig) -> String {
     }
     s.push_str(&format!("; Max-Age={}", c.max_age_secs));
     s.push_str(&format!("; SameSite={}", c.samesite));
-    if c.secure || c.samesite.eq_ignore_ascii_case("None") {
+    if c.secure || c.partitioned || c.samesite.eq_ignore_ascii_case("None") {
         s.push_str("; Secure");
     }
     if c.http_only {
         s.push_str("; HttpOnly");
+    }
+    if c.partitioned {
+        s.push_str("; Partitioned");
     }
     s
 }

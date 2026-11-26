@@ -8,7 +8,7 @@ use pow_gate_core::{
     context::{self, AddressPolicy, Assurance, Scope},
     HmacKey,
 };
-use rand_core::OsRng;
+use p256::elliptic_curve::Generate;
 use sha2::Sha256;
 
 const KEY: &[u8] = b"performance-compatibility-key-32-bytes";
@@ -76,8 +76,8 @@ fn prepared_hmac_preserves_framing_and_independent_messages() {
 
 #[test]
 fn prepared_verification_accepts_existing_wire_token_and_rejects_changes() {
-    let sk = SigningKey::random(&mut OsRng);
-    let payload = serde_json::json!({"version":2,"pk":codec::b64url(sk.verifying_key().to_encoded_point(false).as_bytes()),"context":"legacy-context","assurance":{"kind":"pow","difficulty":2000},"iat":1000,"exp":2000});
+    let sk = SigningKey::generate();
+    let payload = serde_json::json!({"version":2,"pk":codec::b64url(sk.verifying_key().to_sec1_point(false).as_bytes()),"context":"legacy-context","assurance":{"kind":"pow","difficulty":2000},"iat":1000,"exp":2000});
     let payload = codec::b64url(&serde_json::to_vec(&payload).unwrap());
     let mut mac = Hmac::<Sha256>::new_from_slice(KEY).unwrap();
     mac.update(format!("pow-gate-clearance-v2|{payload}").as_bytes());
@@ -135,7 +135,7 @@ fn native_ecdsa_matches_rustcrypto_for_valid_and_invalid_signatures() {
     use pow_gate_core::proof;
     let message = proof::message("GET", "/path?x", 1000);
     for _ in 0..24 {
-        let key = SigningKey::random(&mut OsRng);
+        let key = SigningKey::generate();
         let signature: Signature = key.sign(message.as_bytes());
         let mut signatures = vec![
             signature.to_bytes().to_vec(),
@@ -166,11 +166,11 @@ fn native_ecdsa_matches_rustcrypto_for_valid_and_invalid_signatures() {
         }
         let mut keys = vec![
             key.verifying_key()
-                .to_encoded_point(false)
+                .to_sec1_point(false)
                 .as_bytes()
                 .to_vec(),
             key.verifying_key()
-                .to_encoded_point(true)
+                .to_sec1_point(true)
                 .as_bytes()
                 .to_vec(),
             vec![],

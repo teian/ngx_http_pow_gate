@@ -12,7 +12,7 @@ fn pk() -> Vec<u8> {
     SigningKey::from_bytes((&[1u8; 32]).into())
         .unwrap()
         .verifying_key()
-        .to_encoded_point(false)
+        .to_sec1_point(false)
         .as_bytes()
         .to_vec()
 }

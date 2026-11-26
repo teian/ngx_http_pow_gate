@@ -36,7 +36,7 @@ pub fn issue(
     ttl: i64,
 ) -> Challenge {
     let mut raw = [0u8; 16];
-    getrandom::getrandom(&mut raw).expect("OS RNG");
+    getrandom::fill(&mut raw).expect("OS RNG");
     let salt = hex(&raw);
     let exp = now + ttl;
     let token = b64url(&hmac(key, &binding(&salt, exp, difficulty, pk, context)));

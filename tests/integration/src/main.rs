@@ -26,6 +26,8 @@
 //!       back inside the challenge page (pow_gate_replay) so the solver can
 //!       re-issue it; replay off / oversized / over client_max_body_size fall back
 
+mod client;
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
 use p256::ecdsa::{signature::Signer, Signature, SigningKey, VerifyingKey};
 use pow_gate_core::target::solution_valid;
@@ -67,9 +69,7 @@ fn main() {
     // Compose starts containers concurrently; entrypoint scripts can still be
     // running when the client starts, especially under ARM emulation. Retry
     // transport failures only, under one bounded startup deadline.
-    let startup = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(2))
-        .build();
+    let startup = client::Agent::new(Some(Duration::from_secs(2)), true);
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         match startup.get(&format!("{base}/healthz")).call() {
@@ -81,7 +81,7 @@ fn main() {
                 println!("✓ /healthz excluded (200)");
                 break;
             }
-            Err(ureq::Error::Transport(_)) if Instant::now() < deadline => {
+            Err(client::Error::Transport(_)) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(200));
             }
             other => fail(format!("/healthz expected 200, got {other:?}")),
@@ -89,12 +89,12 @@ fn main() {
     }
 
     // 2. uncleared request gets a challenge, not upstream content
-    let first = ureq::get(&format!("{base}/"))
+    let first = client::get(&format!("{base}/"))
         .set("User-Agent", "e2e-client")
         .call();
     let body = match first {
         Ok(r) => r.into_string().unwrap_or_default(),
-        Err(ureq::Error::Status(_, r)) => r.into_string().unwrap_or_default(),
+        Err(client::Error::Status(_, r)) => r.into_string().unwrap_or_default(),
         Err(e) => fail(format!("GET / failed: {e}")),
     };
     if body.contains("upstream-content") {
@@ -110,7 +110,7 @@ fn main() {
     let pubkey = B64.encode(&pk);
 
     // 3. fetch a challenge
-    let ch: Challenge = match ureq::get(&format!("{base}/.pow/challenge"))
+    let ch: Challenge = match client::get(&format!("{base}/.pow/challenge"))
         .set("X-Pow-Key", &pubkey)
         .set("User-Agent", "e2e-client")
         .call()
@@ -138,7 +138,7 @@ fn main() {
     // keypair for clearance binding + proof
 
     // 5. submit the solution
-    let verify = ureq::post(&format!("{base}/.pow/verify")).set("User-Agent", "e2e-client").send_json(ureq::json!({
+    let verify = client::post(&format!("{base}/.pow/verify")).set("User-Agent", "e2e-client").send_json(serde_json::json!({
         "version": ch.version,
         "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&ch.token).as_bytes()))),
         "salt": ch.salt, "exp": ch.exp, "token": ch.token,
@@ -155,18 +155,18 @@ fn main() {
     let cookie = set_cookie.split(';').next().unwrap_or("").to_string();
     println!("✓ verified, got clearance cookie");
     // A redeemed token stays spent across all worker connections.
-    let replay = ureq::post(&format!("{base}/.pow/verify"))
-        .set("User-Agent", "e2e-client").send_json(ureq::json!({
+    let replay = client::post(&format!("{base}/.pow/verify"))
+        .set("User-Agent", "e2e-client").send_json(serde_json::json!({
             "version": ch.version, "salt": ch.salt, "exp": ch.exp, "token": ch.token,
             "nonce": nonce, "difficulty": ch.difficulty, "pubkey": pubkey,
             "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&ch.token).as_bytes()))),
         }));
-    if !matches!(replay, Err(ureq::Error::Status(409, _))) {
+    if !matches!(replay, Err(client::Error::Status(409, _))) {
         fail("redeemed challenge accepted twice");
     }
     println!("✓ repeated redemption rejected (409)");
 
-    let moved = ureq::get(&format!("{base}/"))
+    let moved = client::get(&format!("{base}/"))
         .set("Cookie", &cookie)
         .set("User-Agent", "different-client")
         .call()
@@ -182,7 +182,7 @@ fn main() {
         ("/stronger", None),
         ("/", Some(("X-Pow-Test-IP", "198.51.100.42"))),
     ] {
-        let mut request = ureq::get(&format!("{base}{path}"))
+        let mut request = client::get(&format!("{base}{path}"))
             .set("Cookie", &cookie)
             .set("User-Agent", "e2e-client");
         if let Some((key, value)) = header {
@@ -196,7 +196,7 @@ fn main() {
     println!("✓ cookie sharing across addresses/policies and stronger-policy downgrade rejected");
 
     // Race fresh redemption over independent connections and nginx workers.
-    let racing: Challenge = ureq::get(&format!("{base}/.pow/challenge"))
+    let racing: Challenge = client::get(&format!("{base}/.pow/challenge"))
         .set("X-Pow-Key", &pubkey)
         .set("User-Agent", "e2e-client")
         .call()
@@ -206,7 +206,7 @@ fn main() {
     let winning_nonce = (0..)
         .find(|n| solution_valid(&racing.salt, *n, racing.difficulty))
         .unwrap();
-    let racing_body = ureq::json!({
+    let racing_body = serde_json::json!({
         "version": racing.version, "salt": racing.salt, "exp": racing.exp, "token": racing.token,
         "nonce": winning_nonce, "difficulty": racing.difficulty, "pubkey": pubkey,
         "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&racing.token).as_bytes()))),
@@ -219,12 +219,12 @@ fn main() {
             let barrier = barrier.clone();
             std::thread::spawn(move || {
                 barrier.wait();
-                match ureq::post(&format!("{base}/.pow/verify"))
+                match client::post(&format!("{base}/.pow/verify"))
                     .set("User-Agent", "e2e-client")
                     .send_json(body)
                 {
                     Ok(r) => r.status(),
-                    Err(ureq::Error::Status(code, _)) => code,
+                    Err(client::Error::Status(code, _)) => code,
                     Err(_) => 0,
                 }
             })
@@ -246,14 +246,14 @@ fn main() {
     let sig: Signature = sk.sign(msg.as_bytes());
     let proof = format!("{}.{}", B64.encode(sig.to_bytes()), ts);
 
-    let cleared = ureq::get(&format!("{base}/"))
+    let cleared = client::get(&format!("{base}/"))
         .set("Cookie", &cookie)
         .set("X-Pow-Proof", &proof)
         .set("User-Agent", "e2e-client")
         .call();
     let cleared_body = match cleared {
         Ok(r) => r.into_string().unwrap_or_default(),
-        Err(ureq::Error::Status(s, _)) => fail(format!("cleared GET / status {s}")),
+        Err(client::Error::Status(s, _)) => fail(format!("cleared GET / status {s}")),
         Err(e) => fail(format!("cleared GET / failed: {e}")),
     };
     if !cleared_body.contains("upstream-content") {
@@ -268,12 +268,12 @@ fn main() {
         let sig: Signature = sk.sign(format!("GET /.pow/status {ts}").as_bytes());
         format!("{}.{}", B64.encode(sig.to_bytes()), ts)
     };
-    let server_now = |r: &ureq::Response| -> i64 {
+    let server_now = |r: &client::Response| -> i64 {
         r.header("x-pow-now")
             .and_then(|v| v.parse().ok())
             .unwrap_or_else(|| fail("response lacks a numeric X-Pow-Now"))
     };
-    match ureq::get(&status_url).set("Cookie", &cookie).set("X-Pow-Proof", &proof_for(now())).set("User-Agent", "e2e-client").call() {
+    match client::get(&status_url).set("Cookie", &cookie).set("X-Pow-Proof", &proof_for(now())).set("User-Agent", "e2e-client").call() {
         Ok(r) if r.status() == 204 => {
             if (server_now(&r) - now()).abs() > 5 { fail("X-Pow-Now is not the current server time"); }
             if r.header("cache-control") != Some("no-store") { fail("/status must be no-store"); }
@@ -282,8 +282,8 @@ fn main() {
         Err(e) => fail(format!("/status with valid proof failed: {e}")),
     }
     let far_off = now() - 3600;
-    match ureq::get(&status_url).set("Cookie", &cookie).set("X-Pow-Proof", &proof_for(far_off)).set("User-Agent", "e2e-client").call() {
-        Err(ureq::Error::Status(409, r)) => {
+    match client::get(&status_url).set("Cookie", &cookie).set("X-Pow-Proof", &proof_for(far_off)).set("User-Agent", "e2e-client").call() {
+        Err(client::Error::Status(409, r)) => {
             if r.header("x-pow-reason") != Some("proof_skew") { fail("skewed proof not reported as proof_skew"); }
             if (server_now(&r) - now()).abs() > 5 { fail("skew response lacks the current server time"); }
         }
@@ -291,15 +291,15 @@ fn main() {
     }
     // in the window but a wrong signature: invalid, NOT skew
     let forged = format!("{}.{}", B64.encode([0u8; 64]), now());
-    match ureq::get(&status_url).set("Cookie", &cookie).set("X-Pow-Proof", &forged).set("User-Agent", "e2e-client").call() {
-        Err(ureq::Error::Status(409, r)) => {
+    match client::get(&status_url).set("Cookie", &cookie).set("X-Pow-Proof", &forged).set("User-Agent", "e2e-client").call() {
+        Err(client::Error::Status(409, r)) => {
             if r.header("x-pow-reason").is_some() { fail("forged proof must not be reported as skew"); }
         }
         other => fail(format!("forged proof expected 409, got {:?}", other.map(|r| r.status()))),
     }
     // no cookie at all: still tells the time (for the solver's resync)
-    match ureq::get(&status_url).set("User-Agent", "e2e-client").call() {
-        Err(ureq::Error::Status(409, r)) if r.header("x-pow-now").is_some() => {}
+    match client::get(&status_url).set("User-Agent", "e2e-client").call() {
+        Err(client::Error::Status(409, r)) if r.header("x-pow-now").is_some() => {}
         other => fail(format!("cookie-less /status expected 409 with X-Pow-Now, got {:?}", other.map(|r| r.status()))),
     }
     println!("✓ clock hardening: X-Pow-Now on /status, proof_skew reported only for window violations");
@@ -310,7 +310,7 @@ fn main() {
     //     (Sec-Fetch-Dest: empty — the only kind that CAN attach a custom
     //     header) WITHOUT a proof must be challenged, even with a valid
     //     clearance cookie — this is what defeats stolen-cookie replay.
-    let no_proof_fetch = ureq::get(&format!("{base}/"))
+    let no_proof_fetch = client::get(&format!("{base}/"))
         .set("Cookie", &cookie)
         .set("Sec-Fetch-Mode", "cors")
         .set("Sec-Fetch-Dest", "empty")
@@ -318,7 +318,7 @@ fn main() {
         .call();
     let no_proof_body = match no_proof_fetch {
         Ok(r) => r.into_string().unwrap_or_default(),
-        Err(ureq::Error::Status(_, r)) => r.into_string().unwrap_or_default(),
+        Err(client::Error::Status(_, r)) => r.into_string().unwrap_or_default(),
         Err(e) => fail(format!("fetch-no-proof GET / failed: {e}")),
     };
     if no_proof_body.contains("upstream-content") {
@@ -330,7 +330,7 @@ fn main() {
     let ts2 = now();
     let sig2: Signature = sk.sign(format!("GET / {ts2}").as_bytes());
     let proof2 = format!("{}.{}", B64.encode(sig2.to_bytes()), ts2);
-    let with_proof = ureq::get(&format!("{base}/"))
+    let with_proof = client::get(&format!("{base}/"))
         .set("Cookie", &cookie)
         .set("Sec-Fetch-Mode", "cors")
         .set("Sec-Fetch-Dest", "empty")
@@ -339,7 +339,7 @@ fn main() {
         .call();
     let with_proof_body = match with_proof {
         Ok(r) => r.into_string().unwrap_or_default(),
-        Err(ureq::Error::Status(s, _)) => fail(format!("fetch-with-proof GET / status {s}")),
+        Err(client::Error::Status(s, _)) => fail(format!("fetch-with-proof GET / status {s}")),
         Err(e) => fail(format!("fetch-with-proof GET / failed: {e}")),
     };
     if !with_proof_body.contains("upstream-content") {
@@ -349,14 +349,14 @@ fn main() {
 
     // 6d. a top-level navigation (Sec-Fetch-Mode: navigate) passes on the cookie
     //     alone — it cannot carry a custom header.
-    let nav = ureq::get(&format!("{base}/"))
+    let nav = client::get(&format!("{base}/"))
         .set("Cookie", &cookie)
         .set("Sec-Fetch-Mode", "navigate")
         .set("User-Agent", "e2e-client")
         .call();
     let nav_body = match nav {
         Ok(r) => r.into_string().unwrap_or_default(),
-        Err(ureq::Error::Status(s, _)) => fail(format!("navigation GET / status {s}")),
+        Err(client::Error::Status(s, _)) => fail(format!("navigation GET / status {s}")),
         Err(e) => fail(format!("navigation GET / failed: {e}")),
     };
     if !nav_body.contains("upstream-content") {
@@ -375,7 +375,7 @@ fn main() {
         ("cors", "font", "font load"),
         ("cors", "script", "module-script load"),
     ] {
-        let sub = ureq::get(&format!("{base}/"))
+        let sub = client::get(&format!("{base}/"))
             .set("Cookie", &cookie)
             .set("Sec-Fetch-Mode", mode)
             .set("Sec-Fetch-Dest", dest)
@@ -384,7 +384,7 @@ fn main() {
             .call();
         let sub_body = match sub {
             Ok(r) => r.into_string().unwrap_or_default(),
-            Err(ureq::Error::Status(s, _)) => fail(format!("{what} status {s}")),
+            Err(client::Error::Status(s, _)) => fail(format!("{what} status {s}")),
             Err(e) => fail(format!("{what} failed: {e}")),
         };
         if !sub_body.contains("upstream-content") {
@@ -397,7 +397,7 @@ fn main() {
 
     // 6f. a location that does NOT set pow_gate_require_proof gets the default
     //     (off): fetch/XHR passes on the cookie alone, no proof demanded.
-    let default_proof = ureq::get(&format!("{base}/default-proof"))
+    let default_proof = client::get(&format!("{base}/default-proof"))
         .set("Cookie", &cookie)
         .set("Sec-Fetch-Mode", "cors")
         .set("Sec-Fetch-Dest", "empty")
@@ -405,7 +405,7 @@ fn main() {
         .call();
     let default_proof_body = match default_proof {
         Ok(r) => r.into_string().unwrap_or_default(),
-        Err(ureq::Error::Status(s, _)) => fail(format!("default-proof GET status {s}")),
+        Err(client::Error::Status(s, _)) => fail(format!("default-proof GET status {s}")),
         Err(e) => fail(format!("default-proof GET failed: {e}")),
     };
     if !default_proof_body.contains("upstream-content") {
@@ -422,7 +422,7 @@ fn main() {
     //    any client IP is in range). Retry to absorb the refresher's startup.
     let mut verified = false;
     for _ in 0..40 {
-        let body = ureq::get(&format!("{base}/"))
+        let body = client::get(&format!("{base}/"))
             .set("User-Agent", "verifierbot/1.0")
             .call()
             .map(|r| r.into_string().unwrap_or_default())
@@ -439,7 +439,7 @@ fn main() {
     println!("✓ verified good-bot allowed via IP-range verifier");
     let mut dns_verified = false;
     for _ in 0..40 {
-        let body = ureq::get(&format!("{base}/"))
+        let body = client::get(&format!("{base}/"))
             .set("User-Agent", "dnsbot/1.0")
             .set("X-Pow-Test-IP", "127.0.0.1")
             .call()
@@ -459,7 +459,7 @@ fn main() {
     // 8. challenge:<N> — a UA mapped to challenge:5000 is issued exactly that
     //    difficulty, the echoed value verifies, and echoing a LOWER one with
     //    the same token is rejected (HMAC-bound).
-    let hard: Challenge = match ureq::get(&format!("{base}/.pow/challenge"))
+    let hard: Challenge = match client::get(&format!("{base}/.pow/challenge"))
         .set("X-Pow-Key", &pubkey)
         .set("User-Agent", "hardbot/1.0")
         .call()
@@ -479,17 +479,17 @@ fn main() {
     while !solution_valid(&hard.salt, hard_nonce, hard.difficulty) {
         hard_nonce += 1;
     }
-    let downgrade = ureq::post(&format!("{base}/.pow/verify")).set("User-Agent", "hardbot/1.0").send_json(ureq::json!({
+    let downgrade = client::post(&format!("{base}/.pow/verify")).set("User-Agent", "hardbot/1.0").send_json(serde_json::json!({
         "version": hard.version,
         "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&hard.token).as_bytes()))),
         "salt": hard.salt, "exp": hard.exp, "token": hard.token,
         "nonce": hard_nonce, "pubkey": pubkey, "difficulty": 4,
     }));
     match downgrade {
-        Err(ureq::Error::Status(400, _)) => println!("✓ difficulty downgrade rejected (400)"),
+        Err(client::Error::Status(400, _)) => println!("✓ difficulty downgrade rejected (400)"),
         other => fail(format!("downgraded difficulty expected 400, got {other:?}")),
     }
-    let hard_ok = ureq::post(&format!("{base}/.pow/verify")).set("User-Agent", "hardbot/1.0").send_json(ureq::json!({
+    let hard_ok = client::post(&format!("{base}/.pow/verify")).set("User-Agent", "hardbot/1.0").send_json(serde_json::json!({
         "version": hard.version,
         "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&hard.token).as_bytes()))),
         "salt": hard.salt, "exp": hard.exp, "token": hard.token,
@@ -503,7 +503,7 @@ fn main() {
     }
 
     // 9. challenge:js — the lightweight tier issues difficulty 1 (any nonce).
-    let js: Challenge = match ureq::get(&format!("{base}/.pow/challenge"))
+    let js: Challenge = match client::get(&format!("{base}/.pow/challenge"))
         .set("X-Pow-Key", &pubkey)
         .set("User-Agent", "litebot/1.0")
         .call()
@@ -523,7 +523,7 @@ fn main() {
     while !solution_valid(&js.salt, js_nonce, js.difficulty) {
         js_nonce += 1;
     }
-    let js_ok = ureq::post(&format!("{base}/.pow/verify")).set("User-Agent", "litebot/1.0").send_json(ureq::json!({
+    let js_ok = client::post(&format!("{base}/.pow/verify")).set("User-Agent", "litebot/1.0").send_json(serde_json::json!({
         "version": js.version,
         "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&js.token).as_bytes()))),
         "salt": js.salt, "exp": js.exp, "token": js.token,
@@ -538,7 +538,7 @@ fn main() {
 
     // 10. challenge:nojs — the full meta-refresh flow, exactly as a text
     //     browser walks it. No redirect-following: we assert each hop.
-    let agent = ureq::builder().redirects(0).build();
+    let agent = client::Agent::new(None, false);
     let nojs_path = "/?q=some+query&page=2"; // return path must survive verbatim
     let nojs_page = match agent
         .get(&format!("{base}{nojs_path}"))
@@ -546,7 +546,7 @@ fn main() {
         .call()
     {
         Ok(r) => r.into_string().unwrap_or_default(),
-        Err(ureq::Error::Status(s, _)) => fail(format!("nojs GET expected 200 page, got {s}")),
+        Err(client::Error::Status(s, _)) => fail(format!("nojs GET expected 200 page, got {s}")),
         Err(e) => fail(format!("nojs GET failed: {e}")),
     };
     if !nojs_page.contains("http-equiv=\"refresh\"") {
@@ -607,13 +607,13 @@ fn main() {
         .get(&format!("{base}{fresh_pass_url}"))
         .set("User-Agent", "nojsbot/1.0")
         .call();
-    if !matches!(reused_nojs, Err(ureq::Error::Status(409, _))) {
+    if !matches!(reused_nojs, Err(client::Error::Status(409, _))) {
         fail("no-JS grant could be redeemed twice");
     }
     println!("✓ no-JS grant reuse rejected (409)");
 
     // 10c. the no-JS clearance opens the gate like any other.
-    let nojs_cleared = ureq::get(&format!("{base}/default-proof"))
+    let nojs_cleared = client::get(&format!("{base}/default-proof"))
         .set("Cookie", &nojs_cookie)
         .set("User-Agent", "nojsbot/1.0")
         .call()
@@ -725,12 +725,12 @@ fn main() {
 
 /// Status and body of a GET that is allowed to fail with an HTTP status.
 fn get(url: &str, headers: &[(&str, &str)]) -> (u16, String, Option<String>) {
-    let mut request = ureq::get(url);
+    let mut request = client::get(url);
     for (key, value) in headers {
         request = request.set(key, value);
     }
     let response = match request.call() {
-        Ok(response) | Err(ureq::Error::Status(_, response)) => response,
+        Ok(response) | Err(client::Error::Status(_, response)) => response,
         Err(error) => fail(format!("GET {url} failed: {error}")),
     };
     let status = response.status();
@@ -746,8 +746,8 @@ fn extras(base: &str) {
     if status != 429 {
         fail(format!("deny:429 expected 429, got {status}"));
     }
-    match ureq::get(&format!("{base}/")).set("User-Agent", "closebot").call() {
-        Err(ureq::Error::Transport(_)) => {}
+    match client::get(&format!("{base}/")).set("User-Agent", "closebot").call() {
+        Err(client::Error::Transport(_)) => {}
         other => fail(format!("deny:444 should close the connection, got {other:?}")),
     }
     println!("✓ deny:429 answers 429, deny:444 closes the connection");
@@ -791,7 +791,7 @@ fn extras(base: &str) {
     let sk = SigningKey::generate();
     let pk = VerifyingKey::from(&sk).to_sec1_point(false).as_bytes().to_vec();
     let pubkey = B64.encode(&pk);
-    let response = ureq::get(&format!("{base}/extras/.pow/challenge"))
+    let response = client::get(&format!("{base}/extras/.pow/challenge"))
         .set("X-Pow-Key", &pubkey)
         .set("User-Agent", "e2e-client")
         .set("X-Test-Scale", "3")
@@ -810,9 +810,9 @@ fn extras(base: &str) {
     while !solution_valid(&ch.salt, nonce, ch.difficulty) {
         nonce += 1;
     }
-    let verify = ureq::post(&format!("{base}/extras/.pow/verify"))
+    let verify = client::post(&format!("{base}/extras/.pow/verify"))
         .set("User-Agent", "e2e-client")
-        .send_json(ureq::json!({
+        .send_json(serde_json::json!({
             "version": ch.version,
             "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&ch.token).as_bytes()))),
             "salt": ch.salt, "exp": ch.exp, "token": ch.token,
@@ -869,7 +869,7 @@ fn post_form(url: &str, body: &str, headers: &[(&str, &str)]) -> Posted {
 
 /// Same, for any other data-carrying method (`PUT`, `PATCH`, …).
 fn send_body(method: &str, url: &str, body: &str, headers: &[(&str, &str)]) -> Posted {
-    let agent = ureq::builder().redirects(0).build();
+    let agent = client::Agent::new(None, false);
     let mut req = agent
         .request(method, url)
         .set("User-Agent", "e2e-client")
@@ -881,7 +881,7 @@ fn send_body(method: &str, url: &str, body: &str, headers: &[(&str, &str)]) -> P
     }
     let res = match req.send_string(body) {
         Ok(r) => r,
-        Err(ureq::Error::Status(_, r)) => r,
+        Err(client::Error::Status(_, r)) => r,
         Err(e) => fail(format!("POST {url} failed: {e}")),
     };
     Posted {

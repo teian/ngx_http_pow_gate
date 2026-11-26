@@ -58,6 +58,6 @@ pub fn consume(entries: &mut [Entry], id: [u8; 32], expires: i64, now: i64) -> O
 /// Random store identity, generated only when nginx creates a fresh zone.
 pub fn issuer() -> Option<[u8; 32]> {
     let mut id = [0u8; 32];
-    getrandom::getrandom(&mut id).ok()?;
+    getrandom::fill(&mut id).ok()?;
     Some(id)
 }

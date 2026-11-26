@@ -33,8 +33,8 @@ the nginx that will load it.** Get those from `nginx -V` (see
 
 ## Prerequisites
 
-- **Rust** ≥ 1.85 (`rustup` recommended; a transitive crypto dep uses edition
-  2024). The crate builds a `cdylib`.
+- **Rust** ≥ 1.88 (`rustup` recommended; the RustCrypto crates require it).
+  The crate builds a `cdylib`.
 - A **C toolchain** and the libraries nginx itself needs, because the build
   compiles/inspects nginx source:
   - `cc`, `make`
@@ -162,7 +162,7 @@ canonical reference; the glibc one's essence:
 
 ```dockerfile
 # Build against the same nginx version + libc you deploy.
-FROM rust:1.95-trixie AS build
+FROM rust:1.100-trixie AS build
 RUN apt-get update && apt-get install -y \
     build-essential perl libclang-19-dev clang-19 libpcre2-dev zlib1g-dev libssl-dev \
     curl ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -180,7 +180,7 @@ COPY --from=build /src/target/release/libngx_http_pow_gate.so \
 ```
 
 Keep `NGINX_VERSION` (build stage) and the `nginx:` runtime tag locked to the
-same value — **and the same libc**: build on Alpine (`rust:1.95-alpine`, musl) for
+same value — **and the same libc**: build on Alpine (`rust:1.100-alpine3.23`, musl) for
 `nginx:alpine`, on Debian/glibc otherwise. A glibc `.so` will not load into a musl
 nginx and vice-versa.
 

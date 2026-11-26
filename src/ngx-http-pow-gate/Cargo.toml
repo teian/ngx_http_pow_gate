@@ -2,7 +2,7 @@
 name = "ngx-http-pow-gate"
 version = "0.6.2"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "nginx dynamic module: proof-of-work gate for bot/scraper mitigation"
 license = "BSD-2-Clause"
 publish = false
@@ -25,9 +25,9 @@ ngx = "0.5"
 pow-gate-core = { path = "../pow-gate-core", features = ["native-crypto"] }
 
 # Remaining module-side dependencies (good-bot verifier + JSON).
-sha2 = "0.10"           # content fingerprint for the shared solver asset
+sha2 = "0.11"           # content fingerprint for the shared solver asset
 arc-swap = "1"          # lock-free hot-swap of refreshed IP-range tables
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"        # /verify body + crawler ip_ranges JSON feeds
-ureq = "2"              # fetch the crawler ip_ranges feeds (background thread)
+ureq = "3"              # fetch the crawler ip_ranges feeds (background thread)
 libc = "0.2"            # FCrDNS: getnameinfo / getaddrinfo (background thread)

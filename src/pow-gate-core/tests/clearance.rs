@@ -102,7 +102,7 @@ fn rejects_legacy_garbage_and_tampering() {
     let forged = format!("{}.{tag}", b64url(&serde_json::to_vec(&payload).unwrap()));
     assert!(!check(&forged, 1500));
     // A correctly signed legacy cookie still cannot pass v2 domain separation.
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     use sha2::Sha256;
     let old = b64url(br#"{"pk":"","iat":1000,"exp":99999}"#);
     let mut mac = Hmac::<Sha256>::new_from_slice(KEY).unwrap();

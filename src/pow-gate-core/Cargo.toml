@@ -2,7 +2,7 @@
 name = "pow-gate-core"
 version = "0.6.2"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "Pure-Rust proof-of-work gate engine: PoW, clearance tokens, per-request proofs"
 license = "BSD-2-Clause"
 publish = false
@@ -20,13 +20,13 @@ native-crypto = ["dep:ring"]
 
 [dependencies]
 ring = { version = "0.17.14", optional = true }
-base64 = "0.22"
-hmac = "0.12"
-sha2 = "0.10"
+base64 = "0.23"
+hmac = "0.13"
+sha2 = "0.11"
 subtle = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-getrandom = "0.2"
+getrandom = "0.4"
 p256 = { version = "0.14", features = ["ecdsa"] }
 
 # Integration tests live in core/tests/ — each file is its own test crate that
@@ -36,7 +36,7 @@ p256 = { version = "0.14", features = ["ecdsa"] }
 libc = "0.2"             # optional Linux thread-CPU benchmark clock
 p256 = { version = "0.14", features = ["ecdsa"] }
 serde_json = "1"
-criterion = "0.5"
+criterion = "0.8"
 
 # Microbenchmarks of the per-request crypto hot path (find the bottleneck).
 # Run: cargo bench -p pow-gate-core   — see docs/performance.md.

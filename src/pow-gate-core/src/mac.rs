@@ -2,7 +2,7 @@
 //! integrity. Internal to the crate.
 
 #[cfg(not(feature = "native-crypto"))]
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 #[cfg(not(feature = "native-crypto"))]
 use sha2::Sha256;
 use subtle::ConstantTimeEq;

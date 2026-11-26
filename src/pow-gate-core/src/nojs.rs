@@ -62,7 +62,7 @@ fn path_ok(path: &str) -> bool {
 /// degrades to `/` rather than failing — the client still gets challenged.
 pub fn issue(key: &[u8], path: &str, delay: i64, now: i64, context: &str) -> String {
     let mut id = [0u8; 16];
-    getrandom::getrandom(&mut id).expect("OS RNG");
+    getrandom::fill(&mut id).expect("OS RNG");
     let grant = Grant {
         context: context.to_owned(),
         id: b64url(&id),

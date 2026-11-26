@@ -56,16 +56,17 @@ fn handshake(base: &str) -> Identity {
         .to_vec();
 
     let ch: Challenge = ureq::get(&format!("{base}/.pow/challenge"))
-        .set("X-Pow-Key", &B64.encode(&pk))
+        .header("X-Pow-Key", &B64.encode(&pk))
         .call()
         .expect("challenge")
-        .into_json()
+        .body_mut()
+        .read_json()
         .expect("challenge json");
     let mut nonce = 0u64;
     while !solution_valid(&ch.salt, nonce, ch.difficulty) {
         nonce += 1;
     }
-    let res = ureq::post(&format!("{base}/.pow/verify")).send_json(ureq::json!({
+    let res = ureq::post(&format!("{base}/.pow/verify")).send_json(serde_json::json!({
         "version": ch.version, "difficulty": ch.difficulty,
         "signature": B64.encode(Signature::to_bytes(&sk.sign(pow_gate_core::proof::challenge_message(&ch.token).as_bytes()))),
         "salt": ch.salt, "exp": ch.exp, "token": ch.token,
@@ -73,7 +74,9 @@ fn handshake(base: &str) -> Identity {
     }));
     let set_cookie = res
         .expect("verify")
-        .header("set-cookie")
+        .headers()
+        .get("set-cookie")
+        .and_then(|value| value.to_str().ok())
         .expect("set-cookie")
         .to_string();
     let cookie = set_cookie.split(';').next().unwrap_or("").to_string();
@@ -125,16 +128,16 @@ fn one_request(agent: &ureq::Agent, base: &str, mode: Mode, id: &Identity) -> Op
         Mode::Baseline => agent.get(&format!("{base}/healthz")).call(),
         Mode::Challenge => agent
             .get(&format!("{base}/"))
-            .set("User-Agent", "perf")
+            .header("User-Agent", "perf")
             .call(),
         Mode::Cleared => agent
             .get(&format!("{base}/"))
-            .set("Cookie", &id.cookie)
+            .header("Cookie", &id.cookie)
             .call(),
         Mode::Proof => agent
             .get(&format!("{base}/"))
-            .set("Cookie", &id.cookie)
-            .set("X-Pow-Proof", &proof_header(id, "GET", "/"))
+            .header("Cookie", &id.cookie)
+            .header("X-Pow-Proof", &proof_header(id, "GET", "/"))
             .call(),
     };
     let response = res.ok()?;
@@ -143,7 +146,7 @@ fn one_request(agent: &ureq::Agent, base: &str, mode: Mode, id: &Identity) -> Op
     }
     // Drain the entire body before recording latency or returning this socket
     // to the pool. Timing headers alone overstates completed-request throughput.
-    let mut body = response.into_reader();
+    let mut body = response.into_body().into_reader();
     let mut preview = Vec::with_capacity(8192);
     body.by_ref().take(65536).read_to_end(&mut preview).ok()?;
     std::io::copy(&mut body, &mut std::io::sink()).ok()?;
@@ -189,9 +192,10 @@ fn run_mode(base: &str, mode: Mode, dur: Duration, conc: usize, id: &Identity) -
         let base = base.clone();
         let id = id.clone();
         handles.push(std::thread::spawn(move || {
-            let agent = ureq::AgentBuilder::new()
+            let agent = ureq::Agent::config_builder()
                 .max_idle_connections_per_host(1)
-                .build();
+                .build()
+                .new_agent();
             let mut lats: Vec<u128> = Vec::new();
             let mut errors = 0u64;
             while !stop.load(Ordering::Relaxed) {

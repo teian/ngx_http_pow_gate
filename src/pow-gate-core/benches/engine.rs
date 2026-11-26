@@ -305,7 +305,7 @@ fn bench_pow_verify(c: &mut Criterion<BenchClock>) {
 fn bench_hmac(c: &mut Criterion<BenchClock>) {
     #[cfg(feature = "native-crypto")]
     {
-        use hmac::{Hmac, Mac};
+        use hmac::{Hmac, KeyInit, Mac};
         use sha2::Sha256;
         let portable = Hmac::<Sha256>::new_from_slice(KEY).unwrap();
         let native = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, KEY);

@@ -25,10 +25,13 @@
 # Digests are unchanged (same content), so reproducibility pins still hold.
 # Override REGISTRY=docker.io/library to go straight to Docker Hub.
 ARG REGISTRY=mirror.gcr.io/library
-# Rust 1.85+ is required: a transitive crypto dep (base64ct) uses edition 2024.
-ARG RUST_VERSION=1.95
-ARG RUST_TRIXIE_DIGEST=sha256:f49565f188ee00bc2a18dd418183f2c5f23ef7d6e691890517ed341a598f67c3
-ARG RUST_ALPINE_DIGEST=sha256:606fd313a0f49743ee2a7bd49a0914bab7deedb12791f3a846a34a4711db7ed2
+# Rust 1.88+ is required by the RustCrypto crates (sha2 0.11, p256 0.14).
+ARG RUST_VERSION=1.100
+ARG RUST_TRIXIE_DIGEST=sha256:e84068000361bf3d4a5ba2b7647f62893528b1eb9f847d7a23b493f5ce8ea254
+# Alpine 3.23 is the last release packaging clang 19, the libclang both module
+# builds pin for bindgen.
+ARG RUST_ALPINE_RELEASE=3.23
+ARG RUST_ALPINE_DIGEST=sha256:9577a4edf61be25721f5fa4006ad463b83ea52c0a17c6e6b673c72c794aee738
 ARG NGINX_VERSION=1.31.10
 ARG NGINX_DEBIAN_DIGEST=sha256:a786635fd3c7b9a57ea089ab1c0713e510f3b548b65fe699ce3d59e4a926b37e
 ARG NGINX_ALPINE_DIGEST=sha256:7fc0fb4af7bf006aeb31aea88069976060f8f0a0a86b667126742cc17f4e31ae
@@ -101,7 +104,7 @@ RUN runuser -u nobody -- python3 /src/tests/pow-clearance/restart-test.py \
       /tmp/nginx-${NGINX_VERSION}/objs/nginx /ngx_http_pow_gate_module.so
 
 # ──────────────────────── 2b. build the module (Alpine) ──────────────────────
-FROM ${REGISTRY}/rust:${RUST_VERSION}-alpine@${RUST_ALPINE_DIGEST} AS module-build-alpine
+FROM ${REGISTRY}/rust:${RUST_VERSION}-alpine${RUST_ALPINE_RELEASE}@${RUST_ALPINE_DIGEST} AS module-build-alpine
 ARG TARGETARCH
 ARG CARGO_BUILD_JOBS
 ARG NGINX_VERSION

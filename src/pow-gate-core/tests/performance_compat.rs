@@ -1,5 +1,5 @@
 //! Optimizations must preserve v2 authentication and the verifier's decisions.
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use p256::ecdsa::SigningKey;
 #[cfg(feature = "native-crypto")]
 use p256::ecdsa::{signature::Signer, Signature};

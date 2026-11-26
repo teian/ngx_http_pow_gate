@@ -120,12 +120,13 @@ fn spawn_refresher(v: Arc<Verifier>) {
         return;
     }
     std::thread::spawn(move || {
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_secs(3))
-            .timeout_read(Duration::from_secs(5))
-            .timeout_write(Duration::from_secs(5))
-            .timeout(Duration::from_secs(10))
-            .build();
+        let agent = ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(3)))
+            .timeout_per_read(Some(Duration::from_secs(5)))
+            .timeout_per_write(Some(Duration::from_secs(5)))
+            .timeout_global(Some(Duration::from_secs(10)))
+            .build()
+            .new_agent();
         let mut feeds = vec![None; v.urls.len()];
         loop {
             for (index, url) in v.urls.iter().enumerate() {
@@ -133,6 +134,7 @@ fn spawn_refresher(v: Arc<Verifier>) {
                     let response = agent.get(url).call().ok()?;
                     let mut bytes = Vec::new();
                     response
+                        .into_body()
                         .into_reader()
                         .take((8 << 20) + 1)
                         .read_to_end(&mut bytes)

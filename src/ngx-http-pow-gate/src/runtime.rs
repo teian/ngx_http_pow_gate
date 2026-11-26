@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::LocationConf;
-use crate::response::as_str;
+use crate::response::{as_bytes, as_str};
 
 /// Minimum accepted HMAC key length, in bytes. A shorter (or empty/unreadable)
 /// key is rejected at config time and fails closed at runtime — it is never used
@@ -60,12 +60,28 @@ pub struct CookieConfig {
     pub max_age_secs: i64,
 }
 
-/// Unix seconds.
+/// Unix seconds, from the system clock. Token issuance and validation use
+/// this one: nginx's cached time can trail the clock (by `timer_resolution`,
+/// or while a worker is busy), and a clearance issued by one worker must not
+/// look "issued in the future" to another.
 pub fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Unix seconds as nginx last cached them: no clock read, but possibly a
+/// little stale. Only for uses where that cannot change an outcome.
+pub fn cached_now() -> i64 {
+    unsafe {
+        let cached = ngx::ffi::ngx_cached_time;
+        if cached.is_null() {
+            now()
+        } else {
+            (*cached).sec as i64
+        }
+    }
 }
 
 /// The matched location's merged `LocationConf`, read from
@@ -182,27 +198,53 @@ fn load_key(path: &str) -> Arc<Vec<u8>> {
 
 // ───────────────────────────── header / body reads ───────────────────────────
 
+/// Header bytes as text. Valid UTF-8 (the normal case) takes the fast
+/// validation path and borrows; anything else is converted lossily, as before.
+fn lossy(bytes: &[u8]) -> Cow<'_, str> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Cow::Borrowed(text),
+        Err(_) => String::from_utf8_lossy(bytes),
+    }
+}
+
 /// Value of the cookie named `name` from the request's `Cookie` header(s).
+/// nginx links every `Cookie` header it parsed from `headers_in.cookie`, so
+/// this does not walk the other request headers.
 pub fn cookie<'a>(r: &'a Request, name: &str) -> Option<Cow<'a, str>> {
-    for (k, v) in r.headers_in_iterator() {
-        if k.as_bytes().eq_ignore_ascii_case(b"cookie") {
-            match String::from_utf8_lossy(v.as_bytes()) {
-                Cow::Borrowed(value) => {
-                    if let Some(value) = cookie_value(value, name) {
-                        return Some(Cow::Borrowed(value));
-                    }
-                    continue;
+    let raw = r as *const Request as *const ngx_http_request_t;
+    let mut entry = unsafe { (*raw).headers_in.cookie };
+    while !entry.is_null() {
+        // SAFETY: header values live in the request's buffers for `'a`.
+        let bytes: &'a [u8] = unsafe { as_bytes(&(*entry).value) };
+        match lossy(bytes) {
+            Cow::Borrowed(value) => {
+                if let Some(value) = cookie_value(value, name) {
+                    return Some(Cow::Borrowed(value));
                 }
-                Cow::Owned(value) => {
-                    if let Some(value) = cookie_value(&value, name) {
-                        return Some(Cow::Owned(value.to_owned()));
-                    }
-                    continue;
+            }
+            Cow::Owned(value) => {
+                if let Some(value) = cookie_value(&value, name) {
+                    return Some(Cow::Owned(value.to_owned()));
                 }
             }
         }
+        entry = unsafe { (*entry).next };
     }
     None
+}
+
+/// The request's `User-Agent`, empty when absent. Read through nginx's own
+/// pointer to the parsed header instead of a scan.
+pub fn user_agent(r: &Request) -> Cow<'_, str> {
+    let raw = r as *const Request as *const ngx_http_request_t;
+    unsafe {
+        let entry = (*raw).headers_in.user_agent;
+        if entry.is_null() {
+            Cow::Borrowed("")
+        } else {
+            lossy(as_bytes(&(*entry).value))
+        }
+    }
 }
 
 fn cookie_value<'a>(value: &'a str, name: &str) -> Option<&'a str> {
@@ -217,7 +259,7 @@ fn cookie_value<'a>(value: &'a str, name: &str) -> Option<&'a str> {
 pub fn header<'a>(r: &'a Request, name: &str) -> Option<Cow<'a, str>> {
     for (k, v) in r.headers_in_iterator() {
         if k.as_bytes().eq_ignore_ascii_case(name.as_bytes()) {
-            return Some(String::from_utf8_lossy(v.as_bytes()));
+            return Some(lossy(v.as_bytes()));
         }
     }
     None
@@ -399,17 +441,17 @@ pub fn build_set_cookie(value: &str, c: &CookieConfig) -> String {
 /// Opaque binding of client address, UA, policy scope and replay-store identity.
 /// No client-supplied forwarding header is trusted; realip must be configured on
 /// nginx when it sits behind a trusted load balancer.
-pub fn client_context(r: &Request, cfg: &Cfg) -> Option<String> {
+pub fn client_context(r: &Request, cfg: &Cfg) -> Option<pow_gate_core::context::Binding> {
     let issuer = crate::redemption::issuer()?;
     let ip = client_ip(r)?;
     let raw = r as *const Request as *mut ngx_http_request_t;
     let scope = cfg
         .scope
         .for_host(unsafe { as_str(&(*raw).headers_in.server) })?;
-    pow_gate_core::context::binding_prepared(
+    pow_gate_core::context::binding_fixed(
         &cfg.authenticator,
         ip,
-        &header(r, "user-agent").unwrap_or_default(),
+        &user_agent(r),
         &scope,
         &issuer,
         cfg.address,

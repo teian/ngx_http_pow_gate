@@ -176,17 +176,31 @@ pub fn install_access_handler(cf: *mut ngx_conf_t) -> ngx_int_t {
 
 /// Evaluate an `ngx_http_complex_value_t` (`$variable` or literal) for this
 /// request — how the gate reads the native `geo`/`map` results.
+///
+/// The result borrows nginx memory: the configuration pool for a literal, the
+/// request pool (or the request's own buffers) for a variable. Both outlive
+/// the handler call that uses the value, which is the only place it is used;
+/// it must not be stored beyond the request.
 fn eval_complex_value<'a>(r: &Request, cv: Option<&'a ngx_http_complex_value_t>) -> Cow<'a, str> {
     let Some(cv) = cv else {
         return Cow::Borrowed("");
     };
-    if cv.lengths.is_null() {
+    let bytes: &'a [u8] = if cv.lengths.is_null() {
         // Literal values belong to the configuration pool, not the request.
-        return String::from_utf8_lossy(unsafe { as_bytes(&cv.value) });
-    }
-    match r.get_complex_value(cv) {
-        Some(v) => Cow::Owned(String::from_utf8_lossy(v.as_bytes()).into_owned()),
-        None => Cow::Borrowed(""),
+        unsafe { as_bytes(&cv.value) }
+    } else {
+        match r.get_complex_value(cv) {
+            // SAFETY: see above — request-owned bytes, used within the handler.
+            Some(v) => {
+                let bytes = v.as_bytes();
+                unsafe { std::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) }
+            }
+            None => return Cow::Borrowed(""),
+        }
+    };
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Cow::Borrowed(text),
+        Err(_) => String::from_utf8_lossy(bytes),
     }
 }
 

@@ -551,6 +551,10 @@ in the local eight-worker comparison (30 KB instead of 268 KB of script bodies).
 Performance tests run only on Linux/amd64. A follow-up reduces normal clearance
 validation allocations from six to one, reuses decoded proof keys and serves
 immutable pages without per-request body copies.
+A v0.6.2 to v0.7.0 comparison shows no measurable change from the outcome
+counters or the dependency upgrades: every gated mode stays within 1% in the
+four-worker layout. A profile-guided pass over the request path in v0.7.0 then
+makes cleared requests about 3% faster.
 CPU and HTTP measurements, conditions and limits are recorded in
 [docs/performance.md](docs/performance.md).
 
@@ -578,7 +582,7 @@ Performance tests run only on Linux/amd64. Dated local review results are in
 
 | Area | Evidence |
 | ---- | -------- |
-| Crypto engine — PoW, clearance, ECDSA proof, context binding, IP-ranges (`src/pow-gate-core`) | **80 portable / 81 accelerated tests** green (`cargo test -p pow-gate-core`, with/without `--features native-crypto`) |
+| Crypto engine — PoW, clearance, ECDSA proof, context binding, IP-ranges (`src/pow-gate-core`) | **84 portable / 85 accelerated tests** green (`cargo test -p pow-gate-core`, with/without `--features native-crypto`) |
 | Browser solver (`assets/solver.js`) | real WebCrypto keygen + 256-bit PoW across Web Workers + proof + IndexedDB; server-anchored clock covered by `node --test` |
 | Challenge pages (`assets/challenge.html`, `challenge-nojs.html`) | themed (light/dark) + i18n (26 languages) + clock warning; no-JS page works in lynx/w3m |
 | Challenge tiers — `challenge:js`, `challenge:<N>`, `challenge:nojs[:secs]` | difficulty HMAC-bound into the token; a weaker clearance never satisfies a stronger policy |

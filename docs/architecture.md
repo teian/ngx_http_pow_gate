@@ -129,7 +129,7 @@ Key points:
 | Zone | Size | Holds |
 | ---- | ---- | ----- |
 | `pow_gate_redemptions_v2` | 2 MiB | the store's random issuer, a clock high-water mark and the one-use ledger; not reserved when Redis is configured |
-| `pow_gate_metrics_v1` | 128 KiB | one counter per `(result, reason)` pair |
+| `pow_gate_metrics_v2` | 256 KiB | the `(result, reason)` pairs and one row of counters per worker, summed by `pow_gate_status` |
 
 Both survive a graceful reload, because nginx hands the existing zone to the new
 configuration. On a full restart they start empty. `pow_gate_state_file` keeps

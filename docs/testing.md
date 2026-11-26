@@ -447,7 +447,7 @@ the musl build moved to Alpine 3.24 with clang 20.
 
 Results on Linux/amd64:
 
-- Core tests: 80 portable and 81 native-crypto tests pass.
+- Core tests: 84 portable and 85 native-crypto tests pass.
 - Docker pipeline (`./scripts/test.sh docker`): build, both `nginx -t` passes
   and the live e2e with the security, HTTP/2 and HTTP/3 suites pass on nginx
   1.31.10 and 1.30.7, on Debian/glibc and Alpine/musl.
@@ -457,5 +457,10 @@ Results on Linux/amd64:
   the eight bundled HTTPS range feeds.
 - No advisory is open against any lockfile in the OSV database.
 
-Not run in this pass: arm64, the browser suite, the Redis suites, the
-performance suite and the release workflow's double-build comparison.
+- Performance: a v0.6.2 versus v0.7.0 comparison shows no measurable change
+  from the new features; see [performance.md](performance.md#v070-comparison-2026-11-26).
+  The request-path tuning that followed makes cleared requests about 3% faster,
+  with zero errors in 104 validated benchmark runs.
+
+Not run in this pass: arm64, the browser suite, the Redis suites and the
+release workflow's double-build comparison.

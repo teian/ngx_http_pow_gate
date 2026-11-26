@@ -8,6 +8,205 @@ binding, assurance/expiry checks, and consume-once/fencing rules are preserved.
 and artifact hashes. All performance measurements were taken on Linux/amd64.
 They are local comparisons, not production limits. ARM64 runs cover correctness only.
 
+The most recent run compares v0.6.2 with v0.7.0 and finds no measurable change
+in the module. The sections after it are earlier passes, measured on a different
+host.
+
+## v0.7.0 comparison, 2026-11-26
+
+This Linux/amd64 run compares the released v0.6.2 module with v0.7.0. It checks
+two things that changed on the request path: the outcome counter that now runs
+in the LOG phase for every gated request, and the dependency upgrades (`ureq` 3,
+`p256` 0.14, `sha2` 0.11, `hmac` 0.13). Both modules were built in release
+profile with Rust 1.100 against the same native nginx 1.31.10, and the v0.7.0
+load generator drives both. [Raw results](performance-0.7.0-results.json)
+retain every run, the binary hashes, CPU placement and the host's load.
+
+The host is an AMD Ryzen 7 5800X desktop, not the machine used for the sections
+below, so absolute numbers are not comparable across sections. Other workloads
+were running: the one-minute load average was between 3 and 8 during the HTTP
+runs. Read the tables as before/after comparisons on one host. All responses
+passed validation with zero errors.
+
+**Result: no measurable change in the module.** Every gated mode stays within
+1% of v0.6.2 in the four-worker layout, and the ungated baseline control moves
+by the same amount.
+
+The v0.7.0 column in the three tables below is the build before the
+[request-path tuning](#request-path-tuning) that the release also contains;
+that tuning is measured separately, against this build.
+
+### Four-worker layout
+
+Three alternating five-second runs per mode, eight clients, four nginx workers,
+loopback HTTP/1.1 keepalive, no TLS/access log, and a 30-second proof warmup.
+Values are medians.
+
+| Mode | v0.6.2 req/s | v0.7.0 req/s | Change | p50 µs v0.6.2 / v0.7.0 | p95 µs v0.6.2 / v0.7.0 | Worker CPU µs/request v0.6.2 / v0.7.0 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| baseline | 140,997 | 139,854 | −0.8% | 48 / 49 | 73 / 73 | 18.0 / 18.2 |
+| challenge | 135,539 | 134,555 | −0.7% | 50 / 50 | 73 / 74 | 14.2 / 14.3 |
+| cleared | 114,733 | 115,084 | +0.3% | 57 / 58 | 91 / 90 | 24.6 / 24.6 |
+| proof | 33,465 | 33,378 | −0.3% | 207 / 208 | 308 / 310 | 81.9 / 81.4 |
+
+The baseline path is excluded from the gate and is not counted, so it is the
+control for host variation. Counting an outcome is one lookup in a worker-local
+index and one atomic increment; the shared-memory mutex is taken only the first
+time a worker sees a new `(result, reason)` pair.
+
+### Separate physical cores and concurrency sweep
+
+One nginx worker on CPU 0; the client on CPUs 1–7 and 9–15, with CPU 8 (CPU 0's
+SMT sibling) excluded from both. Three alternating three-second runs at 1, 4 and
+16 clients after a 30-second proof warmup.
+
+| Clients | Mode | v0.6.2 req/s | v0.7.0 req/s | Change | Worker CPU µs/request v0.6.2 / v0.7.0 |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 1 | baseline | 27,124 | 27,341 | +0.8% | 16.1 / 15.8 |
+| 1 | challenge | 25,365 | 25,308 | −0.2% | 12.7 / 12.9 |
+| 1 | cleared | 21,805 | 22,840 | +4.7% | 22.6 / 21.9 |
+| 1 | proof | 5,169 | 5,351 | +3.5% | 79.3 / 78.5 |
+| 4 | baseline | 71,821 | 69,477 | −3.3% | 10.7 / 11.0 |
+| 4 | challenge | 83,680 | 86,068 | +2.9% | 8.4 / 8.2 |
+| 4 | cleared | 51,537 | 49,326 | −4.3% | 15.8 / 16.5 |
+| 4 | proof | 15,872 | 15,783 | −0.6% | 58.6 / 58.9 |
+| 16 | baseline | 73,717 | 74,892 | +1.6% | 10.3 / 10.1 |
+| 16 | challenge | 91,957 | 91,843 | −0.1% | 7.6 / 7.6 |
+| 16 | cleared | 52,258 | 52,338 | +0.2% | 15.6 / 15.5 |
+| 16 | proof | 16,057 | 15,901 | −1.0% | 57.9 / 58.4 |
+
+The differences run in both directions and the baseline control moves by up to
+3.3%, so this sweep does not establish a change in either direction.
+
+### Engine CPU
+
+Criterion thread-CPU time, 20 samples, medians of three alternating runs per
+tree, `native-crypto` enabled.
+
+| Operation | v0.6.2 | v0.7.0 | Change |
+| --- | ---: | ---: | ---: |
+| PoW hash | 55.7 ns | 56.8 ns | +1.9% |
+| PoW solution verification | 502 ns | 505 ns | +0.5% |
+| Clearance issue | 686 ns | 693 ns | +1.0% |
+| Clearance verification | 790 ns | 794 ns | +0.5% |
+| Context binding | 401 ns | 407 ns | +1.3% |
+| Context + clearance, prepared key | 1.197 µs | 1.218 µs | +1.8% |
+| P-256 proof verification, ring (used by the module) | 39.6 µs | 39.7 µs | +0.4% |
+| P-256 proof verification, RustCrypto (portable core) | 182.0 µs | 203.2 µs | +11.7% |
+| Range lookup, 10,000 ranges, miss | 12.3 ns | 12.3 ns | −0.2% |
+
+One real difference: **portable P-256 verification is about 12% slower with
+`p256` 0.14**, consistently across all three runs. The nginx module does not
+use that path; it verifies with ring through the `native-crypto` feature, which
+is unchanged. It affects only code that uses `pow-gate-core` without that
+feature. The remaining rows differ by 2% or less, which is within the spread
+between runs on this host.
+
+### Request-path tuning
+
+A sampling profile of one worker serving cleared requests (`perf record -e
+cpu-clock:u`, user-space samples only) put 33% of the worker's user-space CPU
+in the module. The two HMAC-SHA-256 computations were the largest part, as
+expected. The rest pointed at glue rather than cryptography:
+
+| Finding | Change |
+| --- | --- |
+| Header values were converted with `String::from_utf8_lossy`, which walks every byte through the slow chunk iterator | Valid UTF-8 takes the fast validation path and borrows; only invalid input is converted lossily |
+| `User-Agent` and `Cookie` were found by scanning all request headers | Read through nginx's own `headers_in` pointers |
+| serde's derived reader for the tagged `assurance` object buffered it on the heap first | A hand-written reader with the same wire format; any key order and unknown keys are still accepted |
+| The client address was formatted through `Display` and the binding returned as a `String` | IPv4 is written directly into a stack buffer; the binding is held inline |
+| A variable-driven `pow_gate_decision` was copied into a new `String` | Borrowed from the request pool |
+| All workers incremented the same outcome counter | One row of counters per worker, summed by `pow_gate_status` |
+
+Clearance validation still reads the system clock rather than nginx's cached
+time. The clock read was 0.15% of the profile, and a cached second that trails
+the clock could make a clearance just issued by another worker look issued in
+the future.
+
+After the changes the module's share of user-space CPU on cleared requests is
+25%. Measured against the build before the tuning, with zero errors in every
+run:
+
+| Measurement | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| Cleared, one pinned worker, 16 clients | 52,884 req/s | 54,605 req/s | +3.3% |
+| Cleared, worker CPU per request | 15.38 µs | 14.82 µs | −3.6% |
+| Cleared, four workers, 8 clients | 129,968 req/s | 132,386 req/s | +1.9% |
+| Proof, one pinned worker, 16 clients | 15,910 req/s | 16,087 req/s | +1.1% |
+| Baseline control, one pinned worker, 16 clients | 74,457 req/s | 74,456 req/s | 0.0% |
+| Context binding (engine) | 407 ns | 353 ns | −13% |
+| Context + clearance, prepared key (engine) | 1.218 µs | 1.117 µs | −8% |
+| Clearance verification (engine) | 794 ns | 770 ns | −3% |
+
+The gain on cleared requests is about 0.56 µs of worker CPU, roughly a tenth of
+what the gate adds to an ungated request (5.1 µs before, 4.6 µs after). Challenge pages
+and the ungated control are unchanged. Signed-proof requests gain the same
+absolute amount, which is small next to the 39.7 µs signature verification.
+The per-worker counters cannot show a difference in a four-worker run; they
+matter on hosts with many more workers. The four-worker figures are higher
+than in the table above because the host was less busy during this run.
+
+### State file
+
+`pow_gate_state_file` keeps the store identity (65 bytes) on disk. nginx reads
+it once when the master creates the shared-memory zone and never while serving
+requests, so no request-path cost is expected. This run checks that: the same
+module, one pinned worker, without the directive and with it pointing at an
+existing file, which is the restored case where challenges from before the
+restart are refused.
+
+| Mode | Without | With state file | Paired difference |
+| --- | ---: | ---: | ---: |
+| Cleared, 16 clients, 8 rounds | 49,942 req/s | 50,099 req/s | 0.0% (−3.3% to +3.4%) |
+| Challenge page, 16 clients, 8 rounds | 84,004 req/s | 83,334 req/s | −0.5% (−4.4% to +6.8%) |
+| Proof, 16 clients, 5 rounds | 14,424 req/s | 14,417 req/s | −0.6% (−2.3% to +2.1%) |
+| Baseline control, 16 clients, 5 rounds | 67,339 req/s | 67,608 req/s | +0.2% (−1.4% to +1.1%) |
+| Full solve, 2 clients, 7 rounds | 2,745 /s | 2,719 /s | −1.3% (−6.2% to +6.8%) |
+| Configuration start-up (`nginx -t`), median of 200 | 2.97 ms | 2.94 ms | none |
+
+**Result: no measurable impact.** The differences are smaller than the spread
+between rounds and have no consistent sign; the ungated control moves as much.
+Columns two and three are medians; the last column is the mean and range of the
+per-round differences. Creating the file on first start measured 0.05 ms more
+than a start without it, on tmpfs; on a disk the single `fsync` at creation
+adds its usual few milliseconds, once.
+
+"Full solve" is the load generator's `solve` mode: one challenge, nonce search
+and redemption per iteration, the only path that consults the pre-restart
+floor. Its rate is limited by the client's solving work, and it is kept low on
+purpose: the local store holds 32,768 redeemed challenges until they expire, so
+a sustained rate above that capacity per challenge lifetime is refused with
+503 by design.
+
+```bash
+python3 scripts/compare-performance.py \
+  --nginx /path/to/nginx-1.31.10/objs/nginx \
+  --before module.so --after module.so \
+  --after-directive "pow_gate_state_file /path/to/existing-state-file;" \
+  --settle-seconds 1.2 --workers 1 --server-cpus 0 --client-cpus 1-7,9-15 \
+  --client target/release/pow-gate-perf --concurrency 16 --seconds 5 --rounds 8 \
+  --modes challenge cleared --output /tmp/pow-state.json
+```
+
+### Reproduction
+
+```bash
+# one native nginx, two modules built against it with the same toolchain
+python3 scripts/compare-performance.py \
+  --nginx /path/to/nginx-1.31.10/objs/nginx \
+  --before /path/to/v0.6.2.so --after /path/to/v0.7.0.so \
+  --client target/release/pow-gate-perf --workers 4 --concurrency 8 \
+  --seconds 5 --rounds 3 --warmup-seconds 30 --output /tmp/pow-shared.json
+
+python3 scripts/compare-performance.py \
+  --nginx /path/to/nginx-1.31.10/objs/nginx \
+  --before /path/to/v0.6.2.so --after /path/to/v0.7.0.so \
+  --client target/release/pow-gate-perf --workers 1 \
+  --server-cpus 0 --client-cpus 1-7,9-15 \
+  --concurrency-list 1 4 16 --seconds 3 --rounds 3 --warmup-seconds 30 \
+  --output /tmp/pow-sweep.json
+```
+
 ## Allocation follow-up, 2026-10-18
 
 This Linux/amd64 follow-up compares the previous performance pass with the

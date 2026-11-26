@@ -180,7 +180,7 @@ COPY --from=build /src/target/release/libngx_http_pow_gate.so \
 ```
 
 Keep `NGINX_VERSION` (build stage) and the `nginx:` runtime tag locked to the
-same value — **and the same libc**: build on Alpine (`rust:1.100-alpine3.23`, musl) for
+same value — **and the same libc**: build on Alpine (`rust:1.100-alpine3.24`, musl) for
 `nginx:alpine`, on Debian/glibc otherwise. A glibc `.so` will not load into a musl
 nginx and vice-versa.
 
@@ -279,7 +279,8 @@ CI enforces this on every release: the `reproducible` job builds each `.so`
 (per `{nginx channel × libc × arch}`) **twice, independently** and fails if the
 two hashes differ.
 
-> Residual non-determinism to watch: the exact `clang-19` *patch* version still
+> Residual non-determinism to watch: the exact clang *patch* version (19 on
+> trixie, 20 on Alpine) still
 > comes from the distro mirror (apt on trixie, apk on Alpine). For full
 > hermeticity, pin packages via `snapshot.debian.org` / a fixed Alpine repo.
 

@@ -28,10 +28,9 @@ ARG REGISTRY=mirror.gcr.io/library
 # Rust 1.88+ is required by the RustCrypto crates (sha2 0.11, p256 0.14).
 ARG RUST_VERSION=1.100
 ARG RUST_TRIXIE_DIGEST=sha256:e84068000361bf3d4a5ba2b7647f62893528b1eb9f847d7a23b493f5ce8ea254
-# Alpine 3.23 is the last release packaging clang 19, the libclang both module
-# builds pin for bindgen.
-ARG RUST_ALPINE_RELEASE=3.23
-ARG RUST_ALPINE_DIGEST=sha256:9577a4edf61be25721f5fa4006ad463b83ea52c0a17c6e6b673c72c794aee738
+# Same Alpine release as the nginx:alpine runtime image the module loads into.
+ARG RUST_ALPINE_RELEASE=3.24
+ARG RUST_ALPINE_DIGEST=sha256:8d0e82abfdf9a38071e07cabc5afba4ddbe077631a80e4e742a760c38beadc33
 ARG NGINX_VERSION=1.31.10
 ARG NGINX_DEBIAN_DIGEST=sha256:a786635fd3c7b9a57ea089ab1c0713e510f3b548b65fe699ce3d59e4a926b37e
 ARG NGINX_ALPINE_DIGEST=sha256:7fc0fb4af7bf006aeb31aea88069976060f8f0a0a86b667126742cc17f4e31ae
@@ -113,9 +112,9 @@ ARG NGINX_SHA256
 # ./configure compiles against, plus a pinned clang/libclang for bindgen.
 RUN apk add --no-cache \
       build-base linux-headers perl pcre2-dev zlib-dev openssl-dev \
-      clang19-dev clang19-libclang llvm19-dev \
+      clang20-dev clang20-libclang llvm20-dev \
       curl ca-certificates
-ENV LIBCLANG_PATH=/usr/lib/llvm19/lib
+ENV LIBCLANG_PATH=/usr/lib/llvm20/lib
 # `-crt-static`: the rust:alpine musl target defaults to a static CRT, which
 # forbids cdylib output ("target ... does not support these crate types"). Turn
 # it off so we get a .so dynamically linked against musl libc. The resulting

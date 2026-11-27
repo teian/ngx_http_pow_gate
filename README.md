@@ -14,7 +14,7 @@
 > accepted. See [security](docs/security.md).
 >
 > Builds, CI and [releases](https://github.com/teian/ngx_http_pow_gate/releases)
-> always cover the latest pinned **mainline 1.31.10 and stable 1.30.7**,
+> always cover the latest pinned **mainline 1.31.10 and stable 1.30.8**,
 > each on glibc/musl and amd64/arm64. Signed, reproducible modules are published
 > per release — see [Installing a released module](#installing-a-released-module).
 > To build a channel yourself:

@@ -328,7 +328,7 @@ sha256sum -c --ignore-missing SHA256SUMS
 ## Required mainline and stable builds
 
 Always build both channels listed in `docker/nginx-versions.json` (currently
-mainline 1.31.10 and stable 1.30.7). The wrapper passes the version, source SHA256
+mainline 1.31.10 and stable 1.30.8). The wrapper passes the version, source SHA256
 and matching Debian/Alpine runtime digests together:
 
 ```bash
